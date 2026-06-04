@@ -1,0 +1,1134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FreeAudit — Service Order Audit Platform</title>
+<link rel="icon" href="/logo.png">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FreeAudit">
+<meta name="theme-color" content="#0b2341">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy:#0b2341; --navy-2:#15356b; --navy-dark:#07182c; --navy-soft:#eef2f8;
+    --red:#c8102e; --red-2:#e23048; --red-dark:#9b0c23; --red-soft:#fdecee;
+    --bg:#eef1f6; --card:#ffffff; --text:#0b2341; --dim:#566380; --faint:#8a94a6;
+    --line:#e7ebf3; --ok:#15803d; --ok-soft:#dcfce7;
+    --shadow:0 1px 2px rgba(11,35,65,.04), 0 6px 16px rgba(11,35,65,.06);
+    --shadow-md:0 2px 6px rgba(11,35,65,.05), 0 16px 38px rgba(11,35,65,.10);
+    --shadow-lg:0 4px 14px rgba(11,35,65,.08), 0 40px 88px rgba(11,35,65,.22);
+    --ring:0 0 0 4px rgba(21,53,107,.18);
+    --r:18px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  html{scroll-behavior:smooth}
+  body{font-family:'Inter','Segoe UI',Arial,sans-serif;color:var(--text);
+    -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;
+    letter-spacing:-.012em;font-feature-settings:'cv05' 1,'cv11' 1,'ss03' 1,'calt' 1;
+    background:
+      radial-gradient(1100px 640px at 100% -8%, rgba(31,68,136,.10) 0%, transparent 58%),
+      radial-gradient(940px 560px at -8% 4%, rgba(200,16,46,.045) 0%, transparent 52%),
+      linear-gradient(180deg,#eff2f8 0%, #e9edf4 100%);
+    background-attachment:fixed}
+  button{font-family:inherit;cursor:pointer}
+  .hidden{display:none!important}
+  h1,h2,h3{letter-spacing:-.023em}
+  ::selection{background:var(--red);color:#fff}
+  :focus-visible{outline:none;box-shadow:var(--ring);border-radius:10px}
+  /* subtle film grain for depth — the kind top sites use */
+  body::after{content:'';position:fixed;inset:0;z-index:9998;pointer-events:none;opacity:.022;mix-blend-mode:multiply;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+  /* refined entrance motion */
+  @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+  main>.card{animation:fadeUp .6s cubic-bezier(.2,.8,.2,1) both}
+  main>.card:nth-child(1){animation-delay:.02s}main>.card:nth-child(2){animation-delay:.09s}
+  main>.card:nth-child(3){animation-delay:.16s}main>.card:nth-child(4){animation-delay:.23s}main>.card:nth-child(5){animation-delay:.3s}
+  /* premium scrollbars */
+  *::-webkit-scrollbar{width:12px;height:12px}
+  *::-webkit-scrollbar-thumb{background:rgba(11,35,65,.16);border-radius:20px;border:3px solid transparent;background-clip:content-box}
+  *::-webkit-scrollbar-thumb:hover{background:rgba(11,35,65,.30);background-clip:content-box}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}html{scroll-behavior:auto}}
+
+  /* ---------- AUTH ---------- */
+  #authView{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
+    background:radial-gradient(1200px 600px at 50% -10%, #1b3e7a 0%, var(--navy) 45%, var(--navy-dark) 100%)}
+  .auth-card{width:100%;max-width:420px;background:var(--card);border-radius:22px;padding:34px 32px;
+    box-shadow:var(--shadow-lg);animation:rise .5s cubic-bezier(.2,.8,.2,1)}
+  .auth-logo{display:flex;flex-direction:column;align-items:center;gap:12px;margin-bottom:22px}
+  .auth-logo img{width:124px;height:136px;object-fit:contain;background:#faf8f3;padding:9px;border-radius:18px;box-shadow:var(--shadow)}
+  .auth-logo .name{font-size:24px;font-weight:800;letter-spacing:-.02em}
+  .auth-logo .sub{font-size:11px;font-weight:600;color:var(--faint);letter-spacing:.16em;text-transform:uppercase}
+  .tabs{display:flex;background:var(--navy-soft);border-radius:12px;padding:4px;margin-bottom:20px}
+  .tabs button{flex:1;border:0;background:transparent;color:var(--dim);font-weight:600;font-size:14px;
+    padding:9px;border-radius:9px;transition:.15s}
+  .tabs button.active{background:#fff;color:var(--navy);box-shadow:0 1px 4px rgba(11,35,65,.12)}
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:12.5px;font-weight:600;color:var(--dim);margin-bottom:6px}
+  .field input{width:100%;padding:12px 14px;border:1.5px solid var(--line);border-radius:11px;font-size:14px;
+    transition:.15s;background:#fbfcfe}
+  .field input:focus{outline:0;border-color:var(--navy-2);background:#fff;box-shadow:0 0 0 4px rgba(21,53,107,.1)}
+  .auth-err{background:var(--red-soft);color:var(--red-dark);font-size:13px;font-weight:500;
+    padding:10px 13px;border-radius:10px;margin-bottom:14px;display:none}
+  .auth-err.show{display:block;animation:rise .25s}
+
+  /* ---------- BUTTONS ---------- */
+  .btn{font-size:14px;font-weight:600;border-radius:12px;padding:12px 20px;border:1.5px solid var(--line);
+    background:#fff;color:var(--text);transition:transform .22s cubic-bezier(.2,.8,.2,1),box-shadow .22s,border-color .22s,background .22s;
+    display:inline-flex;align-items:center;gap:9px;box-shadow:0 1px 2px rgba(11,35,65,.05)}
+  .btn:hover{border-color:var(--faint);transform:translateY(-2px);box-shadow:var(--shadow-md)}
+  .btn:active{transform:translateY(0) scale(.99)}
+  .btn:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+  .btn-block{width:100%;justify-content:center}
+  .btn-red{background:linear-gradient(135deg,var(--red-2),var(--red));color:#fff;border-color:transparent;
+    box-shadow:0 8px 20px rgba(200,16,46,.28), inset 0 1px 0 rgba(255,255,255,.18)}
+  .btn-red:hover{box-shadow:0 16px 32px rgba(200,16,46,.4), inset 0 1px 0 rgba(255,255,255,.18)}
+  .btn-navy{background:linear-gradient(135deg,var(--navy-2),var(--navy));color:#fff;border-color:transparent;
+    box-shadow:0 8px 20px rgba(11,35,65,.26), inset 0 1px 0 rgba(255,255,255,.12)}
+  .btn-navy:hover{box-shadow:0 16px 32px rgba(11,35,65,.36), inset 0 1px 0 rgba(255,255,255,.12)}
+  .btn svg{width:17px;height:17px}
+
+  /* ---------- APP SHELL ---------- */
+  .topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;
+    background:linear-gradient(180deg,rgba(13,40,74,.96),rgba(9,28,54,.94));
+    backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);
+    border-bottom:1px solid rgba(255,255,255,.06);box-shadow:0 1px 0 rgba(200,16,46,.9), 0 18px 40px -18px rgba(0,0,0,.6);
+    padding:18px 26px;color:#fff}
+  .tb-left,.tb-right{flex:1;display:flex;align-items:center;min-width:0}
+  .tb-left{gap:10px;flex-wrap:wrap}
+  .tb-right{justify-content:flex-end;gap:14px}
+  .tb-center{display:flex;align-items:center;gap:20px}
+  .tb-logo{width:164px;height:182px;background:#faf8f3;padding:10px;border-radius:22px;flex-shrink:0;object-fit:contain;
+    box-shadow:0 0 0 5px rgba(255,255,255,.10), 0 0 60px rgba(200,16,46,.45), 0 22px 50px rgba(0,0,0,.55);transition:transform .25s}
+  .tb-logo:hover{transform:scale(1.05)}
+  .topbar .name{font-size:48px;font-weight:800;line-height:1;letter-spacing:-.02em}
+  .topbar .sub{font-size:16px;font-weight:600;color:#a8bfe0;letter-spacing:.22em;text-transform:uppercase;margin-top:8px}
+  .topnav-btn{background:#fff;color:var(--navy);border:0;font-weight:700;font-size:14px;padding:10px 16px;border-radius:11px;
+    cursor:pointer;display:inline-flex;align-items:center;gap:7px;box-shadow:0 6px 16px rgba(0,0,0,.28);transition:.15s;letter-spacing:.01em;white-space:nowrap}
+  .topnav-btn:hover{transform:translateY(-2px);box-shadow:0 10px 22px rgba(0,0,0,.4);background:#fff}
+  .topnav-btn svg{width:17px;height:17px;color:var(--red)}
+  @media(max-width:680px){
+    /* Stack the header cleanly on phones: logo on top, nav buttons, then account */
+    .topbar{flex-direction:column;align-items:center;gap:12px;padding:14px}
+    .tb-left,.tb-right{flex:none;width:auto;justify-content:center}
+    .tb-center{order:1}
+    .tb-left{order:2;flex-wrap:wrap;gap:8px}
+    .tb-right{order:3;gap:10px}
+    .tb-logo{width:80px;height:90px}
+    .topbar .name{font-size:24px}.topbar .sub{font-size:9px;letter-spacing:.16em}
+    .topnav-btn{padding:9px 14px;font-size:13px}
+    .menu{right:auto;left:50%;transform:translateX(-50%)}
+  }
+  .chip{font-size:12px;font-weight:700;padding:6px 13px;border-radius:30px;background:#1c3a63;color:#cfe0f5}
+  .chip.run{background:var(--red);color:#fff;animation:pulse 1.4s infinite}
+  .avatar{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--red-2),var(--red));
+    color:#fff;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;border:0;position:relative}
+  .menu{position:absolute;right:0;top:48px;background:#fff;color:var(--text);border-radius:14px;
+    box-shadow:var(--shadow-lg);min-width:210px;padding:8px;display:none;z-index:30}
+  .menu.open{display:block;animation:rise .18s}
+  .menu .who{padding:10px 12px;border-bottom:1px solid var(--line);margin-bottom:6px}
+  .menu .who .n{font-weight:700;font-size:14px}
+  .menu .who .e{font-size:12px;color:var(--faint)}
+  .menu button{width:100%;text-align:left;border:0;background:transparent;padding:10px 12px;border-radius:9px;
+    font-size:14px;color:var(--text);display:flex;align-items:center;gap:10px}
+  .menu button:hover{background:var(--navy-soft)}
+  .menu button svg{width:16px;height:16px;color:var(--dim)}
+
+  main{max-width:1060px;margin:26px auto;padding:0 20px;display:flex;flex-direction:column;gap:20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);
+    transition:box-shadow .35s cubic-bezier(.2,.8,.2,1),transform .35s cubic-bezier(.2,.8,.2,1)}
+  .card:hover{box-shadow:var(--shadow-md);transform:translateY(-2px)}
+  .hero{position:relative;overflow:hidden;padding:34px 34px;color:#fff;
+    background:radial-gradient(900px 400px at 85% -40%, #1f4488 0%, var(--navy) 55%);border:0}
+  .hero h1{font-size:30px;font-weight:800;margin:0 0 8px;letter-spacing:-.02em}
+  .hero p{font-size:15px;color:#bcd0ee;margin:0 0 22px;max-width:560px;line-height:1.5}
+  .hero .controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  .hero .runmsg{font-size:13px;color:#bcd0ee}
+  .herohint{font-size:12.5px;color:#9fb4d6;margin:16px 0 0;max-width:600px;line-height:1.5}
+  .herohint strong{color:#fff}
+  .hero .btn{font-size:15px;padding:14px 24px}
+
+  .results{display:none;gap:14px;flex-wrap:wrap}
+  .results.show{display:flex}
+  .dash{padding:24px 26px;border:0;color:#fff;background:radial-gradient(900px 380px at 88% -70%, #1f4488 0%, var(--navy) 62%);box-shadow:var(--shadow-lg)}
+  .dash-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:20px}
+  .dash-head h2{font-size:25px;font-weight:800;margin:0;color:#fff;letter-spacing:-.02em}
+  .dash-sub{font-size:13px;color:#bcd0ee;margin-top:5px}
+  .dash-pills{display:flex;gap:8px;flex-wrap:wrap}
+  .dpill{font-size:11.5px;font-weight:700;padding:6px 12px;border-radius:20px;background:rgba(255,255,255,.12);color:#cfe0f5;display:inline-flex;align-items:center;gap:7px}
+  .dpill i{width:8px;height:8px;border-radius:50%;background:#9fb4d6;display:inline-block}
+  .dpill.ok i{background:#34d399}.dpill.warn i{background:#fbbf24}
+  .dpill.run{background:var(--red);color:#fff}.dpill.run i{background:#fff;animation:pulse 1.2s infinite}
+  .dash-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:14px}
+  .dcard{background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.20);border-radius:16px;padding:18px 14px;text-align:center;transition:transform .15s}
+  .dcard:hover{transform:translateY(-2px)}
+  .dcard .dv{font-size:30px;font-weight:800;line-height:1;color:#fff}
+  .dcard .dl{font-size:11.5px;color:#cfe0f5;margin-top:8px;font-weight:600;letter-spacing:.02em}
+  .dcard.red .dv{color:#ff8a9b}.dcard.green .dv{color:#6ee7b7}
+  @media(max-width:880px){.dash-grid{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:520px){.dash-grid{grid-template-columns:repeat(2,1fr)}.dash-head h2{font-size:21px}}
+  .impact{padding:24px 28px;border:0;color:#fff;
+    background:radial-gradient(800px 320px at 88% -60%, #1f4488 0%, var(--navy) 60%);box-shadow:var(--shadow-lg)}
+  .impact h2{font-size:18px;font-weight:800;margin:0;color:#fff}
+  .impact-date{font-size:12px;color:#bcd0ee;margin-top:3px}
+  .impact-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:18px}
+  .itile{background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.22);border-radius:14px;padding:18px 14px;text-align:center}
+  .itile .v{font-size:30px;font-weight:800;line-height:1;color:#fff}
+  .itile .l{font-size:11.5px;color:#e3edfb;margin-top:7px;font-weight:600;letter-spacing:.02em}
+  .itile.accent{background:linear-gradient(135deg,var(--red-2),var(--red));border-color:transparent;box-shadow:0 10px 24px rgba(200,16,46,.4)}
+  .itile.accent .l{color:#ffe1e6}
+  @media(max-width:680px){
+    .impact-tiles{grid-template-columns:repeat(2,1fr)}
+    .impact-big{font-size:34px}
+    .bar-row{grid-template-columns:78px 1fr auto;gap:8px}
+    .bar-label{font-size:11px}
+    .bar-val{font-size:12px}
+  }
+  .impact-panel{background:radial-gradient(600px 240px at 90% -60%, #1f4488 0%, var(--navy) 60%);border-radius:14px;padding:20px;margin-top:6px;color:#fff}
+  .impact-hero{text-align:center;margin-bottom:16px}
+  .impact-big{font-size:46px;font-weight:800;color:#fff;line-height:1;letter-spacing:-.02em}
+  .impact-big-l{font-size:13px;color:#bcd0ee;margin-top:6px}
+  .impact-big-l b{color:#fff}
+  .impact-note{font-size:13px;color:var(--dim);margin:16px 0 0;line-height:1.6}
+  .impact-note b{color:var(--navy)}
+  .score-table{width:100%;border-collapse:collapse;margin-top:6px}
+  .score-table th,.score-table td{padding:11px 12px;text-align:right;font-size:13px;border-bottom:1px solid var(--line)}
+  .score-table th:first-child,.score-table td:first-child{text-align:left}
+  .score-table thead th{font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--faint);border-bottom:2px solid var(--line)}
+  .score-table tbody tr:hover{background:var(--navy-soft)}
+  .score-table .who{font-weight:700;color:var(--navy)}
+  .score-table .tot{font-weight:800;color:var(--navy)}
+  .score-table .tot-col{background:#f6f8fc}
+  .score-rank{display:inline-flex;width:22px;height:22px;border-radius:50%;background:var(--navy-soft);color:var(--navy);
+    font-size:11px;font-weight:800;align-items:center;justify-content:center;margin-right:9px}
+  .score-rank.top{background:linear-gradient(135deg,var(--red-2),var(--red));color:#fff}
+  .score-foot{font-size:12px;color:var(--faint);margin:16px 0 0;line-height:1.6}
+  .score-foot b{color:var(--dim)}
+  .score-empty{padding:26px;text-align:center;color:var(--faint);font-size:14px}
+  .score-table .who{display:flex;align-items:center;gap:10px}
+  .score-table .who-name{display:flex;flex-direction:column;line-height:1.2}
+  .score-table .who-title{font-weight:600;font-size:11px;color:var(--faint);margin-top:1px}
+  .score-rank{flex:none}
+  .score-wide{font-variant-numeric:tabular-nums}
+  #scoreBody{overflow-x:auto}
+  .score-controls{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:14px 0 4px}
+  .score-date{font-size:12px;font-weight:600;color:var(--dim);display:inline-flex;align-items:center;gap:6px}
+  .score-date input{font-family:inherit;font-size:13px;font-weight:600;color:var(--navy);border:1.5px solid var(--line);
+    border-radius:10px;padding:7px 10px;background:#fff;transition:border-color .2s}
+  .score-date input:hover{border-color:var(--faint)}
+  .btn-sm{padding:8px 16px;font-size:13px}
+  .seg{display:inline-flex;background:var(--navy-soft);border-radius:11px;padding:3px}
+  .seg-btn{border:0;background:transparent;color:var(--dim);font-weight:700;font-size:13px;padding:7px 15px;border-radius:8px;
+    cursor:pointer;transition:.18s}
+  .seg-btn.active{background:#fff;color:var(--navy);box-shadow:0 1px 4px rgba(11,35,65,.14)}
+  .score-quick{display:inline-flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+  .chip-btn{border:1.5px solid var(--line);background:#fff;color:var(--dim);font-weight:600;font-size:12px;
+    padding:6px 11px;border-radius:999px;cursor:pointer;transition:.18s}
+  .chip-btn:hover{border-color:var(--navy-2);color:var(--navy)}
+  .chip-refresh{border-color:var(--red);color:var(--red);font-weight:700}
+  .chip-refresh:hover{background:var(--red-soft);border-color:var(--red)}
+  .chip-refresh:disabled{opacity:.6;cursor:default}
+  .eff{display:inline-block;min-width:46px;padding:3px 9px;border-radius:999px;font-weight:800;font-size:12px}
+  .eff-hi{background:var(--ok-soft);color:var(--ok)}
+  .eff-mid{background:#fef3c7;color:#a16207}
+  .eff-lo{background:var(--red-soft);color:var(--red-dark)}
+  .score-team{display:flex;align-items:center;gap:18px;margin:8px 0 16px;padding:18px 22px;border-radius:16px;
+    background:linear-gradient(135deg,var(--navy-2),var(--navy));color:#fff;box-shadow:var(--shadow-md)}
+  .score-team .st-eff{font-size:42px;font-weight:900;line-height:1;letter-spacing:-.03em;
+    padding:8px 16px;border-radius:13px;background:rgba(255,255,255,.12)}
+  .score-team .st-eff.eff-hi{color:#86efac;background:rgba(134,239,172,.14)}
+  .score-team .st-eff.eff-mid{color:#fde047;background:rgba(253,224,71,.14)}
+  .score-team .st-eff.eff-lo{color:#fca5a5;background:rgba(252,165,165,.16)}
+  .score-team .st-eff.st-plain{color:#fff}
+  .score-team .st-label{font-size:15px;font-weight:800;letter-spacing:-.01em}
+  .score-team .st-sub{font-size:12.5px;color:#c3d4ee;margin-top:3px;font-weight:600}
+  .score-table tfoot .team-row td{border-top:2px solid var(--navy);border-bottom:0;background:var(--navy-soft);font-weight:800;padding-top:13px;padding-bottom:13px}
+  .score-table tfoot .team-row .tot-col{background:#e7eef9}
+  .team-rank{background:var(--navy)!important;color:#fff!important}
+  .chart-block{margin-top:18px}
+  .chart-title{font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);margin-bottom:12px}
+  .bar-row{display:grid;grid-template-columns:118px 1fr auto;align-items:center;gap:12px;margin-bottom:11px}
+  .bar-label{font-size:12.5px;font-weight:600;color:var(--dim);text-align:right}
+  .bar-track{background:#eef2f8;border-radius:8px;height:26px;overflow:hidden}
+  .bar{height:100%;border-radius:8px;width:0;transition:width 1s cubic-bezier(.2,.8,.2,1)}
+  .bar.manual{background:linear-gradient(90deg,#94a3b8,#64748b)}
+  .bar.free{background:linear-gradient(90deg,var(--red-2),var(--red))}
+  .bar.cat{background:linear-gradient(90deg,#1f4488,var(--navy))}
+  .bar-val{font-size:13px;font-weight:800;color:var(--navy);white-space:nowrap}
+  .steps{display:flex;flex-direction:column;gap:14px;margin-top:4px}
+  .step{display:flex;gap:16px;align-items:flex-start;padding:16px 18px;border:1px solid var(--line);border-radius:14px;background:#fbfcfe}
+  .step-n{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--red-2),var(--red));color:#fff;
+    font-weight:800;font-size:17px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .step-t{font-weight:800;font-size:15px;color:var(--navy)}
+  .step-d{font-size:13px;color:var(--dim);line-height:1.55;margin-top:3px}
+  .step-d b{color:var(--navy)}
+  .stat{flex:1;min-width:120px;background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:16px 18px;box-shadow:var(--shadow)}
+  .stat .v{font-size:26px;font-weight:800;color:var(--navy)}
+  .stat.red .v{color:var(--red)}
+  .stat .l{font-size:12px;color:var(--dim);font-weight:600;margin-top:2px}
+
+  .sec-head{display:flex;align-items:center;gap:12px;padding:18px 22px;border-bottom:1px solid var(--line)}
+  .sec-head .ico{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(135deg,var(--red-2),var(--red));color:#fff;flex-shrink:0}
+  .sec-head .ico svg{width:18px;height:18px}
+  .sec-head h2{font-size:15px;font-weight:700;color:var(--navy);letter-spacing:-.01em;margin:0;text-transform:none}
+  .sec-head .desc{font-size:12px;color:var(--faint)}
+  .sec-head .tools{margin-left:auto;display:flex;gap:8px}
+  .sec-head .tool{font-size:12.5px;font-weight:600;color:var(--navy);background:var(--navy-soft);border:0;
+    padding:7px 13px;border-radius:9px;display:inline-flex;align-items:center;gap:6px;text-decoration:none}
+  .sec-head .tool:hover{background:#e1e9f6}
+  .sec-head .tool svg{width:14px;height:14px}
+  .progwrap{margin:16px 22px 0}
+  .progtrack{height:16px;background:#e6eaf1;border-radius:9px;overflow:hidden;position:relative}
+  .progfill{height:100%;width:0;border-radius:9px;background:linear-gradient(90deg,var(--navy-2),var(--red));
+    background-size:200% 100%;transition:width .4s cubic-bezier(.2,.8,.2,1);animation:shimmer 2s linear infinite}
+  .progfill.indeterminate{width:34%;animation:ind 1.3s ease-in-out infinite, shimmer 2s linear infinite}
+  @keyframes ind{0%{transform:translateX(-120%)}100%{transform:translateX(330%)}}
+  @keyframes shimmer{0%{background-position:0% 0}100%{background-position:-200% 0}}
+  .proglabel{font-size:13px;font-weight:700;color:var(--navy);margin-top:8px;display:flex;align-items:center;gap:8px}
+  .proglabel::before{content:'';width:9px;height:9px;border-radius:50%;background:var(--red);animation:pulse 1.2s infinite}
+  .console{margin:14px 22px 22px;background:var(--navy-dark);color:#cfe0f5;font-family:'SF Mono',Consolas,monospace;
+    font-size:12.5px;border-radius:12px;padding:18px 20px;height:300px;overflow:auto;white-space:pre-wrap;line-height:1.6;
+    box-shadow:inset 0 2px 12px rgba(0,0,0,.35)}
+  .console .dim{color:#7f93b3}
+  .report-frame{margin:18px;border-radius:14px;overflow:hidden;border:1px solid var(--line);
+    box-shadow:0 12px 34px rgba(11,35,65,.14);background:#fff;position:relative}
+  iframe{width:100%;height:620px;border:0;background:#fff;display:block}
+  .livestats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 22px 0}
+  .livestats.wide{}
+  .lstat{background:var(--navy-soft);border:1px solid var(--line);border-radius:12px;padding:13px 12px;text-align:center}
+  .lstat .lv{font-size:24px;font-weight:800;color:var(--navy);line-height:1;letter-spacing:-.01em}
+  .lstat .ll{font-size:11px;color:var(--dim);margin-top:6px;font-weight:600}
+  .lstat.wide .lv{font-size:18px;color:var(--red)}
+  @media(max-width:560px){.livestats{grid-template-columns:repeat(2,1fr)}}
+  .report-state{height:620px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:var(--faint);text-align:center;padding:24px}
+  .report-state svg{width:54px;height:54px;color:#c3cde0}
+  .report-state p{font-size:14px;line-height:1.6;margin:0}
+  .spinner{width:46px;height:46px;border-radius:50%;border:4px solid var(--navy-soft);border-top-color:var(--red);animation:spin .9s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ---------- MODAL ---------- */
+  .overlay{position:fixed;inset:0;background:rgba(7,24,44,.55);backdrop-filter:blur(3px);
+    display:none;align-items:center;justify-content:center;z-index:40;padding:20px}
+  .overlay.open{display:flex}
+  .modal{width:100%;max-width:520px;background:#fff;border-radius:20px;box-shadow:var(--shadow-lg);
+    padding:26px 28px;animation:rise .25s}
+  .modal h3{margin:0 0 4px;font-size:19px;font-weight:800}
+  .modal .lead{margin:0 0 20px;font-size:13px;color:var(--dim)}
+  .modal-lg{max-width:700px;max-height:88vh;overflow:auto}
+  .about-body h4{font-size:14px;font-weight:800;color:var(--navy);margin:20px 0 7px}
+  .about-body h4:first-child{margin-top:6px}
+  .about-body p{font-size:13.5px;line-height:1.6;color:var(--dim);margin:0 0 6px}
+  .about-body p strong,.about-body p em{color:var(--navy);font-style:normal;font-weight:700}
+  .about-checks{margin:6px 0 0;padding-left:0;list-style:none}
+  .about-checks li{font-size:13px;color:var(--dim);line-height:1.5;padding:5px 0 5px 26px;position:relative}
+  .about-checks li::before{content:'✓';position:absolute;left:0;top:5px;color:#fff;background:var(--red);
+    width:17px;height:17px;border-radius:50%;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center}
+  .about-checks li b{color:var(--navy)}
+  .about-checks.alt li::before{background:var(--navy)}
+  .about-card{padding:24px 26px}
+  .about-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .about-head .ico{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(135deg,var(--red-2),var(--red));color:#fff;flex-shrink:0}
+  .about-head .ico svg{width:19px;height:19px}
+  .about-head h2{font-size:18px;font-weight:800;color:var(--navy);margin:0}
+  .about-head .desc{font-size:12.5px;color:var(--faint)}
+  .about-lead{font-size:13.5px;line-height:1.6;color:var(--dim);margin:0 0 12px}
+  .about-lead strong,.about-lead em{color:var(--navy);font-style:normal;font-weight:700}
+  .about-cols{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:10px}
+  .about-sub{font-size:11.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--navy);margin-bottom:6px}
+  @media(max-width:680px){.about-cols{grid-template-columns:1fr;gap:12px}}
+  .users-list{display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow:auto;margin-bottom:6px}
+  .user-row{display:flex;align-items:center;gap:12px;padding:11px 14px;border:1px solid var(--line);border-radius:12px;background:#fbfcfe}
+  .user-av{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--navy-2),var(--navy));
+    color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .user-row .un{font-weight:700;font-size:14px}
+  .user-row .ue{font-size:12px;color:var(--faint)}
+  .user-row .udot{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:var(--faint)}
+  .user-row .udot i{width:9px;height:9px;border-radius:50%;background:#cbd5e1;display:inline-block}
+  .user-row.online .udot{color:var(--ok)}.user-row.online .udot i{background:var(--ok);box-shadow:0 0 0 3px rgba(21,128,61,.15)}
+  .sgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .sgrid .full{grid-column:1/-1}
+  .toggle{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:500;padding:6px 0}
+  .toggle input{width:18px;height:18px;accent-color:var(--red)}
+  .modal-actions{margin-top:22px;display:flex;justify-content:flex-end;gap:10px;align-items:center}
+  .saved{color:var(--ok);font-weight:600;font-size:13px;opacity:0;transition:.2s}
+  .saved.show{opacity:1}
+  .x{margin-left:auto;border:0;background:transparent;font-size:22px;color:var(--faint);cursor:pointer;line-height:1}
+
+  @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+  @media(max-width:620px){.sgrid{grid-template-columns:1fr}.hero h1{font-size:24px}}
+</style>
+</head>
+<body>
+
+  <!-- ===================== AUTH VIEW ===================== -->
+  <div id="authView">
+    <div class="auth-card">
+      <div class="auth-logo">
+        <img src="/logo.png" alt="Freedom Logistics Service Solutions logo">
+        <div class="name">FreeAudit</div>
+        <div class="sub">Service Order Audit Platform</div>
+      </div>
+      <div class="tabs">
+        <button id="tabLogin" class="active">Sign in</button>
+        <button id="tabReg">Create account</button>
+      </div>
+      <div id="authErr" class="auth-err"></div>
+
+      <form id="loginForm">
+        <div class="field"><label>Email</label><input type="email" id="li_email" autocomplete="username" required></div>
+        <div class="field"><label>Password</label><input type="password" id="li_pw" autocomplete="current-password" required></div>
+        <button class="btn btn-red btn-block" type="submit">Sign in</button>
+      </form>
+
+      <form id="regForm" class="hidden">
+        <div class="field"><label>Full name</label><input type="text" id="rg_name" autocomplete="name" required></div>
+        <div class="field"><label>Email</label><input type="email" id="rg_email" autocomplete="email" required></div>
+        <div class="field"><label>Password (6+ characters)</label><input type="password" id="rg_pw" autocomplete="new-password" required></div>
+        <div class="field"><label>Signup code</label><input type="text" id="rg_code" autocomplete="off" placeholder="Ask your administrator" required></div>
+        <button class="btn btn-red btn-block" type="submit">Create account</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===================== APP VIEW ===================== -->
+  <div id="appView" class="hidden">
+    <header class="topbar">
+      <div class="tb-left">
+        <button id="openAbout" class="topnav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> About</button>
+        <button id="openHow" class="topnav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/></svg> How it works</button>
+        <button id="openImpact" class="topnav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> Impact</button>
+        <button id="openScore" class="topnav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg> Scorecard</button>
+      </div>
+      <div class="tb-center">
+        <img class="tb-logo" src="/logo.png" alt="Freedom Logistics Service Solutions logo">
+        <div><div class="name">FreeAudit</div><div class="sub">Service Order Audit Platform</div></div>
+      </div>
+      <div class="tb-right">
+      <div id="chip" class="chip">Idle</div>
+      <div style="position:relative">
+        <button id="avatar" class="avatar">--</button>
+        <div id="menu" class="menu">
+          <div class="who"><div class="n" id="meName"></div><div class="e" id="meEmail"></div></div>
+          <button id="openUsers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Active Users</button>
+          <button id="openSettings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Settings</button>
+          <button id="logout"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> Sign out</button>
+        </div>
+      </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="card dash">
+        <div class="dash-head">
+          <div>
+            <h2 id="greeting">Welcome back</h2>
+            <div class="dash-sub" id="dashSub">Loading your audit overview…</div>
+          </div>
+          <div class="dash-pills" id="dashPills"></div>
+        </div>
+        <div class="dash-grid" id="dashGrid"></div>
+      </section>
+
+      <section class="card hero">
+        <h1>Ready-to-Invoice Audit</h1>
+        <p>One click checks every Ready-to-Invoice order in Fullbay for photos, parts, inspections, hours, PO numbers, duplicate photos, and the completion tracker — then builds a full report.</p>
+        <div class="controls">
+          <button id="run" class="btn btn-red"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Run Audit</button>
+          <button id="connect" class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Sign in to Fullbay</button>
+          <button id="connectVorto" class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Sign in to Vorto</button>
+          <button id="stop" class="btn hidden"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> Stop</button>
+          <button id="view" class="btn btn-navy" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> View Report</button>
+          <a id="csv" class="btn" href="/report-csv" download><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> CSV</a>
+          <button id="pdf" class="btn" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> <span id="pdfLabel">PDF</span></button>
+          <span id="runmsg" class="runmsg"></span>
+        </div>
+        <p class="herohint">First time or after a timeout, click <strong>Sign in to Fullbay</strong> — the login opens on the shop computer. Once signed in, anyone can run audits (here or remotely).</p>
+      </section>
+
+      <section id="results" class="results"></section>
+
+      <section class="card">
+        <div class="sec-head">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></div>
+          <div><h2>Live progress</h2><div class="desc">Real-time output as the audit runs</div></div>
+        </div>
+        <div id="progWrap" class="progwrap hidden">
+          <div class="progtrack"><div id="progfill" class="progfill"></div></div>
+          <div id="proglabel" class="proglabel"></div>
+        </div>
+        <div id="liveStats" class="livestats hidden">
+          <div class="lstat"><div class="lv" id="lsOrders">0/0</div><div class="ll">Orders</div></div>
+          <div class="lstat"><div class="lv" id="lsIssues">0</div><div class="ll">Issues found</div></div>
+          <div class="lstat"><div class="lv" id="lsPhotos">0</div><div class="ll">Photos checked</div></div>
+          <div class="lstat wide"><div class="lv" id="lsCurrent">—</div><div class="ll">Current order</div></div>
+        </div>
+        <pre id="log" class="console"><span class="dim">Ready — press Run Audit to begin.</span></pre>
+      </section>
+
+      <section class="card">
+        <div class="sec-head">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div>
+          <div><h2>Latest report</h2><div class="desc">Findings, photos, and the completion check</div></div>
+          <div class="tools">
+            <button class="tool" id="refreshReport"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Refresh</button>
+            <a class="tool" href="/report" target="_blank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg> Open full</a>
+          </div>
+        </div>
+        <div class="report-frame">
+          <div id="reportEmpty" class="report-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <p>Your latest report will appear here.<br>Run an audit to generate it.</p>
+          </div>
+          <div id="reportBuilding" class="report-state hidden">
+            <div class="spinner"></div>
+            <p>Building your report…</p>
+          </div>
+          <iframe id="report" class="hidden"></iframe>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ===================== SETTINGS MODAL ===================== -->
+  <div id="settingsOverlay" class="overlay">
+    <div class="modal">
+      <div style="display:flex;align-items:flex-start">
+        <div><h3>Settings</h3><p class="lead">Control what the audit checks and where it reads from.</p></div>
+        <button class="x" id="closeSettings">&times;</button>
+      </div>
+      <div class="sgrid">
+        <div class="field"><label>Orders to audit (0 = all)</label><input type="number" id="maxOrders" min="0"></div>
+        <div class="field"><label>Tracker year (blank = current)</label><input type="text" id="sheetYear" placeholder="auto"></div>
+        <div class="field full"><label>Live Google Sheets links — one per line (read live, never stale)</label><textarea id="sheetLinks" rows="2" placeholder="https://docs.google.com/spreadsheets/d/.../edit" style="width:100%;font:inherit;padding:8px;box-sizing:border-box"></textarea></div>
+        <div class="field full"><label>Google Sheets API key (enables live reading)</label><input type="password" id="googleApiKey" autocomplete="off" placeholder="not set"></div>
+        <div class="field full"><label>Tracker file (.xlsx fallback, blank = newest)</label><input type="text" id="sheetFile" placeholder="auto-detect newest .xlsx — used only if live reading is off/unavailable"></div>
+        <div class="field full"><label>Signup code (people need this to create an account)</label><input type="text" id="signupCode"></div>
+        <div class="field"><label>Fullbay email (for auto sign-in)</label><input type="text" id="fullbayUser" placeholder="not set" autocomplete="off"></div>
+        <div class="field"><label>Fullbay password</label><input type="password" id="fullbayPassword" autocomplete="off"></div>
+        <div class="field"><label>Vorto phone number (for auto sign-in)</label><input type="text" id="vortoUser" placeholder="phone used to log into Vorto" autocomplete="off"></div>
+        <div class="field"><label>Vorto password</label><input type="password" id="vortoPassword" autocomplete="off"></div>
+        <label class="toggle full"><input type="checkbox" id="checkDuplicatePhotos"> Detect duplicate photos across orders (slower)</label>
+        <label class="toggle full"><input type="checkbox" id="checkSheetCompletion"> Check “complete in sheet” tracker</label>
+      </div>
+      <div class="modal-actions">
+        <span id="saved" class="saved">Saved ✓</span>
+        <button class="btn" id="cancelSettings">Cancel</button>
+        <button class="btn btn-navy" id="saveSettings">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== ABOUT MODAL ===================== -->
+  <div id="aboutOverlay" class="overlay">
+    <div class="modal modal-lg">
+      <div style="display:flex;align-items:flex-start">
+        <div style="display:flex;align-items:center;gap:14px">
+          <img src="/logo.png" alt="logo" style="width:54px;height:60px;object-fit:contain;background:#faf8f3;padding:6px;border-radius:12px">
+          <div><h3>About FreeAudit</h3><p class="lead">Service Order Audit Platform · Freedom Logistics Service Solutions</p></div>
+        </div>
+        <button class="x" id="closeAbout">&times;</button>
+      </div>
+      <p class="about-lead">Auditing service orders by hand is slow and easy to get wrong — opening every order in Fullbay, eyeballing photos, checking parts, hunting for missing paperwork. <strong>FreeAudit was built to streamline that entire process</strong> and make great use of your time: it turns a tedious, click-through-every-order review into a one-click pass, then hands you a clean, prioritized list of exactly what needs fixing — so you can focus on the work that actually moves the shop forward.</p>
+      <p class="about-lead">With one click it signs into Fullbay, finds every order at <em>Ready to Invoice</em>, opens each one, and runs a consistent set of checks — bundling the photos, technicians, and notes into a single report. On every order it verifies:</p>
+      <div class="about-cols">
+        <div>
+          <div class="about-sub">What it checks</div>
+          <ul class="about-checks">
+            <li><b>Photos</b> — repair work has before <em>and</em> after photos</li>
+            <li><b>Parts</b> — repair labor actually has parts on it</li>
+            <li><b>Inspections</b> — DOT/PM complaints have paperwork attached</li>
+            <li><b>Hours</b> — no service stuck at 0.00 invoiced hours</li>
+            <li><b>PO numbers</b> — valid MT- format, not malformed or duplicated</li>
+            <li><b>Duplicate photos</b> — same photo not reused across orders</li>
+            <li><b>Completion tracker</b> — unit marked complete in the Google Sheet</li>
+          </ul>
+        </div>
+        <div>
+          <div class="about-sub">Why it's powerful for admin &amp; management</div>
+          <ul class="about-checks alt">
+            <li><b>Standards enforced before money goes out</b> — problems caught before invoicing</li>
+            <li><b>Accountability</b> — findings tied to a technician; reused-photo detection surfaces corner-cutting</li>
+            <li><b>Less missed revenue &amp; rework</b> — missing parts, hours, and paperwork flagged automatically</li>
+            <li><b>Faster close-out</b> — hours of manual review become a few-minute automated pass</li>
+            <li><b>Oversight from anywhere</b> — review results securely, even off-site</li>
+          </ul>
+        </div>
+      </div>
+      <div class="modal-actions"><button class="btn btn-navy" id="okAbout">Got it</button></div>
+    </div>
+  </div>
+
+  <!-- ===================== HOW IT WORKS MODAL ===================== -->
+  <div id="howOverlay" class="overlay">
+    <div class="modal modal-lg">
+      <div style="display:flex;align-items:flex-start">
+        <div><h3>How it works</h3><p class="lead">Three steps from login to a finished audit.</p></div>
+        <button class="x" id="closeHow">&times;</button>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-n">1</div>
+          <div><div class="step-t">Sign in to Fullbay</div><div class="step-d">Click <b>Sign in to Fullbay</b> once on the shop computer (and again only if the session times out). No passwords are stored.</div></div>
+        </div>
+        <div class="step">
+          <div class="step-n">2</div>
+          <div><div class="step-t">Run the audit</div><div class="step-d">Click <b>Run Audit</b>. FreeAudit opens every Ready-to-Invoice order and checks it automatically — photos, parts, inspections, hours, POs, duplicate photos, and the completion tracker.</div></div>
+        </div>
+        <div class="step">
+          <div class="step-n">3</div>
+          <div><div class="step-t">Review the report</div><div class="step-d">In a few minutes you get a clean, prioritized report — with photos, technicians, and notes attached — plus a CSV. Fix what's flagged, then invoice with confidence.</div></div>
+        </div>
+      </div>
+      <div class="modal-actions"><button class="btn btn-navy" id="okHow">Got it</button></div>
+    </div>
+  </div>
+
+  <!-- ===================== IMPACT MODAL ===================== -->
+  <div id="impactOverlay" class="overlay">
+    <div class="modal modal-lg">
+      <div style="display:flex;align-items:flex-start">
+        <div><h3>Impact — latest audit</h3><p class="lead" id="impactDate">Run an audit to see your numbers.</p></div>
+        <button class="x" id="closeImpact">&times;</button>
+      </div>
+      <div class="impact-panel">
+        <div class="impact-hero"><div class="impact-big" id="impBig">—</div><div class="impact-big-l" id="impBigL"></div></div>
+        <div class="impact-tiles" id="impactTiles"></div>
+      </div>
+      <div class="chart-block">
+        <div class="chart-title">Time to audit — manual review vs FreeAudit</div>
+        <div id="timeChart" class="chart"></div>
+      </div>
+      <div class="chart-block">
+        <div class="chart-title">Issues caught, by category</div>
+        <div id="findChart" class="chart"></div>
+      </div>
+      <p class="impact-note" id="impactNote"></p>
+      <div class="modal-actions"><button class="btn btn-navy" id="okImpact">Close</button></div>
+    </div>
+  </div>
+
+  <!-- ===================== SCORECARD MODAL ===================== -->
+  <div id="scoreOverlay" class="overlay">
+    <div class="modal modal-lg">
+      <div style="display:flex;align-items:flex-start">
+        <div><h3>Mechanic Efficiency Scorecard</h3><p class="lead" id="scoreDate">Clocked hours, billed hours &amp; efficiency per mechanic, by week.</p></div>
+        <button class="x" id="closeScore">&times;</button>
+      </div>
+      <div class="score-controls">
+        <div class="seg" id="scoreMetric">
+          <button class="seg-btn active" data-metric="eff">Efficiency</button>
+          <button class="seg-btn" data-metric="clocked">Clocked</button>
+          <button class="seg-btn" data-metric="billed">Billed</button>
+        </div>
+        <div class="seg" id="scoreGroup">
+          <button class="seg-btn active" data-grp="week">Weekly</button>
+          <button class="seg-btn" data-grp="day">Daily</button>
+        </div>
+        <label class="score-date">From <input type="date" id="scoreFrom"></label>
+        <label class="score-date">To <input type="date" id="scoreTo"></label>
+        <button class="btn btn-navy btn-sm" id="scoreApply">Apply</button>
+        <div class="score-quick">
+          <button class="chip-btn" data-quick="thisweek">This week</button>
+          <button class="chip-btn" data-quick="4w">Last 4 wks</button>
+          <button class="chip-btn" data-quick="8w">Last 8 wks</button>
+          <button class="chip-btn" data-quick="today">Today</button>
+          <button class="chip-btn chip-refresh" id="scoreRefresh" title="Re-pull completed hours from Fullbay">↻ Refresh billed</button>
+        </div>
+      </div>
+      <div id="scoreBody"></div>
+      <p class="score-foot" id="scoreFoot">Weeks run <b>Monday–Sunday</b>. <b>Clocked hours</b> are live from Connecteam; <b>efficiency = billed ÷ clocked.</b></p>
+      <div class="modal-actions"><button class="btn btn-navy" id="okScore">Close</button></div>
+    </div>
+  </div>
+
+  <!-- ===================== ACTIVE USERS MODAL ===================== -->
+  <div id="usersOverlay" class="overlay">
+    <div class="modal">
+      <div style="display:flex;align-items:flex-start">
+        <div><h3>Active Users</h3><p class="lead">Everyone with a FreeAudit account. A green dot means signed in now.</p></div>
+        <button class="x" id="closeUsers">&times;</button>
+      </div>
+      <div id="usersList" class="users-list"></div>
+      <div class="modal-actions"><button class="btn btn-navy" id="okUsers">Close</button></div>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  let evtSource = null;
+
+  /* ---------- AUTH ---------- */
+  function showErr(m){ const e=$('authErr'); e.textContent=m; e.classList.add('show'); }
+  function clearErr(){ $('authErr').classList.remove('show'); }
+  $('tabLogin').onclick = () => { $('tabLogin').classList.add('active'); $('tabReg').classList.remove('active'); $('loginForm').classList.remove('hidden'); $('regForm').classList.add('hidden'); clearErr(); };
+  $('tabReg').onclick   = () => { $('tabReg').classList.add('active'); $('tabLogin').classList.remove('active'); $('regForm').classList.remove('hidden'); $('loginForm').classList.add('hidden'); clearErr(); };
+
+  $('loginForm').onsubmit = async (e) => {
+    e.preventDefault(); clearErr();
+    const r = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email:$('li_email').value, password:$('li_pw').value }) });
+    const d = await r.json();
+    if (r.ok) enterApp(); else showErr(d.error || 'Sign in failed.');
+  };
+  $('regForm').onsubmit = async (e) => {
+    e.preventDefault(); clearErr();
+    const r = await fetch('/api/register', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ name:$('rg_name').value, email:$('rg_email').value, password:$('rg_pw').value, code:$('rg_code').value }) });
+    const d = await r.json();
+    if (r.ok) enterApp(); else showErr(d.error || 'Could not create account.');
+  };
+
+  async function checkAuth(){
+    const me = await (await fetch('/api/me')).json();
+    if (me.loggedIn) enterApp(me); else { $('authView').classList.remove('hidden'); $('appView').classList.add('hidden'); }
+  }
+  async function enterApp(me){
+    if (!me) me = await (await fetch('/api/me')).json();
+    window.__me = me;
+    $('authView').classList.add('hidden');
+    $('appView').classList.remove('hidden');
+    $('meName').textContent = me.name || '';
+    $('meEmail').textContent = me.email || '';
+    $('avatar').textContent = (me.name||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
+    initApp();
+  }
+  $('logout').onclick = async () => { await fetch('/api/logout',{method:'POST'}); location.reload(); };
+
+  /* ---------- MENU ---------- */
+  $('avatar').onclick = (e) => { e.stopPropagation(); $('menu').classList.toggle('open'); };
+  document.addEventListener('click', () => $('menu').classList.remove('open'));
+
+  /* ---------- APP ---------- */
+  let appReady = false;
+  function initApp(){
+    if (appReady) return; appReady = true;
+    const log=$('log'), chip=$('chip');
+    const addLine=(t)=>{ log.textContent += t+'\n'; log.scrollTop=log.scrollHeight; };
+    function setRunning(r, by, kind){
+      $('run').disabled=r; $('connect').disabled=r;
+      $('stop').classList.toggle('hidden', !r);
+      chip.textContent = r ? (kind==='signin'?'Signing in…':'Auditing…') : 'Idle';
+      chip.className='chip'+(r?' run':'');
+      if(!r){ $('runmsg').textContent=''; return; }
+      const who = by ? ' · started by '+by : '';
+      $('runmsg').textContent = (kind==='signin'
+        ? 'Signing in to Fullbay on the shop computer'+who+'…'
+        : 'Audit in progress'+who+' — your report will be ready shortly.');
+    }
+    let runTotal = 0;
+    function setProg(pct, label, indeterminate){
+      $('progWrap').classList.remove('hidden');
+      const f=$('progfill');
+      if(indeterminate){ f.classList.add('indeterminate'); } else { f.classList.remove('indeterminate'); f.style.width=Math.max(0,Math.min(100,pct))+'%'; }
+      $('proglabel').textContent=label||'';
+    }
+    const hideProg=()=>$('progWrap').classList.add('hidden');
+    function handleLogForProgress(line){
+      let m = line.match(/Auditing\s+(\d+)/i); if(m){ runTotal=+m[1]; }
+      m = line.match(/\[(\d+)\/(\d+)\]\s*(\S+)?/);
+      if(m){ const i=+m[1], t=(+m[2])||runTotal||1, so=(m[3]&&m[3]!=='...')?m[3]:''; const pct=Math.round(i/t*100);
+        setProg(pct, pct+'%   ·   order '+i+' of '+t+(so?('   ·   '+so):''), false); }
+    }
+
+    /* ---------- Home dashboard ---------- */
+    function relTime(iso){
+      if(!iso) return 'never'; const d=new Date(iso), diff=(Date.now()-d.getTime())/1000;
+      if(diff<60) return 'just now'; if(diff<3600) return Math.round(diff/60)+' min ago';
+      if(diff<86400) return Math.round(diff/3600)+' hr ago';
+      if(diff<7*86400) return Math.round(diff/86400)+' days ago';
+      return d.toLocaleDateString([], {month:'short', day:'numeric'});
+    }
+    function animateCount(el, target){
+      target=Number(target)||0; const t0=performance.now(), dur=700;
+      const step=(t)=>{ const p=Math.min(1,(t-t0)/dur); el.textContent=Math.round(target*(1-Math.pow(1-p,3))); if(p<1) requestAnimationFrame(step); else el.textContent=target; };
+      requestAnimationFrame(step);
+    }
+    function dcard(val,label,cls,isNum){
+      const inner = isNum ? '<div class="dv" data-count="'+val+'">0</div>' : '<div class="dv">'+esc(String(val))+'</div>';
+      return '<div class="dcard '+(cls||'')+'">'+inner+'<div class="dl">'+label+'</div></div>';
+    }
+    async function loadDashboard(){
+      const me = window.__me || {};
+      const h = new Date().getHours();
+      const part = h<12?'Good morning':h<18?'Good afternoon':'Good evening';
+      $('greeting').textContent = part+', '+((me.name||'').trim().split(/\s+/)[0]||'there');
+      const [sum, st, usr, hl] = await Promise.all([
+        fetch('/api/summary').then(r=>r.json()).catch(()=>null),
+        fetch('/api/status').then(r=>r.json()).catch(()=>({})),
+        fetch('/api/users').then(r=>r.json()).catch(()=>({users:[]})),
+        fetch('/api/health').then(r=>r.json()).catch(()=>({})),
+      ]);
+      const online = (usr.users||[]).filter(u=>u.online).length;
+      $('dashSub').textContent = sum
+        ? 'Last audit '+relTime(sum.timestamp)+' · '+sum.ordersChecked+' orders checked'
+        : 'No audit yet — run one to populate your dashboard.';
+      let pills = st.running
+        ? '<span class="dpill run"><i></i>Auditing'+(st.startedBy?' · '+esc(st.startedBy):'')+'</span>'
+        : '<span class="dpill ok"><i></i>Idle</span>';
+      pills += '<span class="dpill"><i></i>'+online+' online</span>';
+      if(hl.trackerUpdated){ const fresh=(Date.now()-new Date(hl.trackerUpdated))<7*864e5; pills += '<span class="dpill '+(fresh?'ok':'warn')+'"><i></i>Trackers '+relTime(hl.trackerUpdated)+'</span>'; }
+      $('dashPills').innerHTML = pills;
+      if(sum){
+        const hrs=(sum.estMinutesSaved||0)/60; const hsaved = hrs>=10?Math.round(hrs)+' hrs':(hrs>=1?hrs.toFixed(1)+' hrs':Math.round(sum.estMinutesSaved||0)+' min');
+        $('dashGrid').innerHTML =
+          dcard(sum.flaggedOrders,'Orders flagged','red',true)+
+          dcard(sum.blockers,'Open blockers','red',true)+
+          dcard(sum.totalFindings,'Total findings','',true)+
+          dcard(hsaved,'Hours saved (last run)','green',false)+
+          dcard(sum.photos,'Photos verified','',true)+
+          dcard(online,'Team online','',true);
+      } else {
+        $('dashGrid').innerHTML =
+          dcard('—','Orders flagged','red',false)+dcard('—','Open blockers','red',false)+dcard('—','Total findings','',false)+
+          dcard('—','Hours saved','green',false)+dcard('—','Photos verified','',false)+dcard(online,'Team online','',true);
+      }
+      $('dashGrid').querySelectorAll('[data-count]').forEach(el=>animateCount(el, el.dataset.count));
+    }
+    function showSummary(line){
+      const m = line.match(/(\d+)\s+of\s+(\d+)\s+orders.*?\((\d+)\s+findings/i);
+      if(!m) return;
+      $('results').innerHTML =
+        '<div class="stat"><div class="v">'+m[2]+'</div><div class="l">Orders audited</div></div>'+
+        '<div class="stat red"><div class="v">'+m[1]+'</div><div class="l">Orders flagged</div></div>'+
+        '<div class="stat red"><div class="v">'+m[3]+'</div><div class="l">Total findings</div></div>';
+      $('results').classList.add('show');
+    }
+
+    let liveIssues=0, livePhotos=0, lastKind='';
+    function resetLiveStats(){ liveIssues=0; livePhotos=0; $('lsOrders').textContent='0/0'; $('lsIssues').textContent='0'; $('lsPhotos').textContent='0'; $('lsCurrent').textContent='—'; $('liveStats').classList.remove('hidden'); }
+    function updateLiveStats(line){
+      const m = line.match(/\[(\d+)\/(\d+)\]\s*(\S+).*?(\d+)\s+items,\s+(\d+)\s+issue\(s\)(?:,\s*(\d+)\s+photos)?/i);
+      if(!m) return;
+      liveIssues += (+m[5]||0); livePhotos += (m[6]?+m[6]:0);
+      $('lsOrders').textContent = m[1]+'/'+m[2];
+      $('lsIssues').textContent = liveIssues;
+      $('lsPhotos').textContent = livePhotos;
+      $('lsCurrent').textContent = m[3];
+    }
+    function showReportState(which){
+      $('reportEmpty').classList.toggle('hidden', which!=='empty');
+      $('reportBuilding').classList.toggle('hidden', which!=='building');
+      $('report').classList.toggle('hidden', which!=='report');
+    }
+    function loadReport(){ $('report').src='/report?'+Date.now(); showReportState('report'); }
+
+    evtSource = new EventSource('/api/events');
+    evtSource.onmessage = (e) => {
+      const m = JSON.parse(e.data);
+      if (m.type==='start'){ log.textContent=''; $('results').classList.remove('show'); runTotal=0; lastKind=m.kind; setRunning(true, m.by, m.kind); setProg(0, (m.kind==='signin'?'Opening Fullbay sign-in…':'Starting up…'), true); if(m.kind!=='signin'){ resetLiveStats(); showReportState('building'); } loadDashboard(); }
+      else if (m.type==='log'){ addLine(m.line); handleLogForProgress(m.line); updateLiveStats(m.line); if(/orders.*findings/i.test(m.line)) showSummary(m.line); }
+      else if (m.type==='done'){ setRunning(false); addLine('\n— Finished —'); setProg(100,'Complete',false); $('view').disabled=false; $('pdf').disabled=false; if(lastKind!=='signin'&&lastKind!=='billed') loadReport(); loadImpact(); loadDashboard(); if(lastKind==='billed' && $('scoreOverlay').classList.contains('open')) loadScore(); }
+    };
+
+    /* How it works modal */
+    const closeHow=()=>$('howOverlay').classList.remove('open');
+    $('openHow').onclick=()=>{ $('howOverlay').classList.add('open'); };
+    $('closeHow').onclick=closeHow; $('okHow').onclick=closeHow;
+    $('howOverlay').onclick=(e)=>{ if(e.target===$('howOverlay')) closeHow(); };
+
+    /* Impact modal */
+    const CHECK_LABELS={A:'Photos',B:'Parts',C:'Inspections',D:'Hours',E:'PO numbers',F:'Duplicate photos',G:'Completion sheet',H:'Vorto tickets'};
+    function itile(v,l,cls){ return '<div class="itile '+(cls||'')+'"><div class="v">'+v+'</div><div class="l">'+l+'</div></div>'; }
+    function fmtTime(min){ if(min>=60){ const h=min/60; return (h>=10?Math.round(h):h.toFixed(1))+' hrs'; } if(min>=1) return Math.round(min)+' min'; return Math.max(1,Math.round(min*60))+' sec'; }
+    function bar(label,pct,val,cls){ return '<div class="bar-row"><div class="bar-label">'+esc(label)+'</div>'+
+      '<div class="bar-track"><div class="bar '+cls+'" data-w="'+pct.toFixed(1)+'"></div></div><div class="bar-val">'+esc(String(val))+'</div></div>'; }
+    function loadImpact(){
+      return fetch('/api/summary').then(r=>r.json()).then(s=>{
+        if(!s){ $('impactDate').textContent='Run an audit to see your numbers.'; $('impBig').textContent='—'; $('impBigL').textContent=''; $('impactTiles').innerHTML=''; $('timeChart').innerHTML=''; $('findChart').innerHTML=''; $('impactNote').textContent=''; return; }
+        const manualMin=s.estMinutesSaved||0, freeMin=(s.runSeconds||0)/60;
+        const savedMin=Math.max(0,manualMin-freeMin);
+        const faster=freeMin>0?Math.round(manualMin/freeMin):null;
+        $('impactDate').textContent='Last run: '+new Date(s.timestamp).toLocaleString();
+        $('impBig').textContent=fmtTime(savedMin)+' saved';
+        $('impBigL').innerHTML='of review time this audit'+(faster?' · <b>'+faster+'× faster</b> than doing it by hand':'');
+        $('impactTiles').innerHTML=itile(s.ordersChecked,'Orders audited')+itile(s.totalFindings,'Issues caught')+itile(s.blockers,'Blockers')+itile(s.photos,'Photos verified');
+        const maxT=Math.max(manualMin,freeMin,1);
+        $('timeChart').innerHTML=bar('Manual review',Math.max(3,manualMin/maxT*100),fmtTime(manualMin),'manual')+bar('FreeAudit',Math.max(3,freeMin/maxT*100),fmtTime(freeMin),'free');
+        const counts=Object.keys(CHECK_LABELS).map(k=>({k,n:(s.byCheck&&s.byCheck[k])||0})).filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
+        const maxN=Math.max(1,...counts.map(c=>c.n));
+        $('findChart').innerHTML=counts.map(c=>bar(CHECK_LABELS[c.k],Math.max(5,c.n/maxN*100),c.n,'cat')).join('')||'<div style="color:#8a94a6;font-size:13px">No issues — everything was clean.</div>';
+        $('impactNote').innerHTML='Auditing <b>'+s.ordersChecked+'</b> orders by hand at ~'+(s.manualMinutesPerOrder||8)+
+          ' min each ≈ <b>'+fmtTime(manualMin)+'</b>. FreeAudit finished in <b>'+fmtTime(freeMin)+'</b> and caught <b>'+
+          s.totalFindings+'</b> issues ('+s.blockers+' blockers) before anything was invoiced.';
+        requestAnimationFrame(()=>{ setTimeout(()=>document.querySelectorAll('#impactOverlay .bar').forEach(b=>{ b.style.width=b.dataset.w+'%'; }),60); });
+      }).catch(()=>{});
+    }
+    const closeImpact=()=>$('impactOverlay').classList.remove('open');
+    $('openImpact').onclick=()=>{ loadImpact(); $('impactOverlay').classList.add('open'); };
+    $('closeImpact').onclick=closeImpact; $('okImpact').onclick=closeImpact;
+    $('impactOverlay').onclick=(e)=>{ if(e.target===$('impactOverlay')) closeImpact(); };
+
+    /* Scorecard modal — clocked hours (live from Connecteam) + billed + efficiency, by week or day */
+    function fmtWeek(iso){ const d=new Date(iso+'T00:00:00'); return d.toLocaleDateString([], {month:'short', day:'numeric'}); }
+    const normName = (s)=> (s||'').toLowerCase().replace(/\s+/g,' ').trim();
+    function effClass(pct){ if(pct>=70) return 'eff-hi'; if(pct>=45) return 'eff-mid'; return 'eff-lo'; }
+    const isoOf = (d)=> d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    function whoCell(i,name,title){
+      return '<td class="who"><span class="score-rank'+(i===0?' top':'')+'">'+(i+1)+'</span>'+
+        '<span class="who-name">'+esc(name)+(title?'<span class="who-title">'+esc(title)+'</span>':'')+'</span></td>';
+    }
+    let scoreGroup='week', scoreMetric='eff';
+
+    // Combined view: Connecteam clocked + Fullbay billed (completed) hours -> efficiency.
+    function renderScore(clocked, billed){
+      if(!clocked || !clocked.configured || !clocked.byPerson || !clocked.byPerson.length){
+        if(clocked && clocked.error){ $('scoreBody').innerHTML='<div class="score-empty">Couldn’t reach Connecteam: '+esc(clocked.error)+'</div>'; }
+        else { $('scoreBody').innerHTML='<div class="score-empty">No clocked hours for this range — connect Connecteam in Settings or widen the dates.</div>'; }
+        $('scoreDate').textContent='Mechanic efficiency by week.';
+        return;
+      }
+      const isDay = clocked.groupBy==='day';
+      const periods = (clocked.periods && clocked.periods.length) ? clocked.periods : (clocked.weeks||[]).map(w=>({key:w,label:fmtWeek(w)}));
+      // Billed lookup by normalized name -> { weekHours{}, total }.
+      const billedMap = {};
+      const haveBilled = !!(billed && billed.available && billed.byEmployee && billed.byEmployee.length);
+      if(haveBilled) billed.byEmployee.forEach(e=>{ billedMap[normName(e.name)] = e; });
+      // Daily view can't show billed/efficiency (Fullbay billing is weekly) -> force Clocked.
+      const metric = (isDay || !haveBilled) ? 'clocked' : scoreMetric;
+
+      const rng = clocked.rangeStart && clocked.rangeEnd ? (fmtWeek(clocked.rangeStart)+' – '+fmtWeek(clocked.rangeEnd)) : '';
+      const upd = haveBilled && billed.updatedAt ? (' · billed as of '+new Date(billed.updatedAt).toLocaleDateString()) : '';
+      const metricLabel = metric==='eff'?'Efficiency (billed ÷ clocked)':metric==='billed'?'Billed (completed) hours':'Clocked hours';
+      $('scoreDate').textContent = metricLabel+(isDay?' by day':' by week')+(rng?' · '+rng:'')+upd;
+
+      // Per-week cell for the chosen metric.
+      function cell(person, b, key){
+        const c = person.weekHours[key];
+        if(metric==='clocked') return c!=null?c.toFixed(1):'—';
+        const bh = b && b.weekHours ? b.weekHours[key] : null;
+        if(metric==='billed') return bh!=null?bh.toFixed(1):'—';
+        // efficiency
+        if(c==null || c===0 || bh==null) return '—';
+        const e = Math.round(bh/c*100);
+        return '<span class="eff '+effClass(e)+'">'+e+'%</span>';
+      }
+
+      // ----- Team aggregates over the displayed periods -----
+      const teamCW={}, teamBW={}; let teamC=0, teamB=0, ppl=0;
+      clocked.byPerson.forEach(person=>{
+        const b = billedMap[normName(person.name)];
+        let any=false;
+        periods.forEach(p=>{
+          const cv=person.weekHours[p.key]; if(cv!=null){ teamCW[p.key]=(teamCW[p.key]||0)+cv; teamC+=cv; any=true; }
+          const bv=b&&b.weekHours?b.weekHours[p.key]:null; if(bv!=null){ teamBW[p.key]=(teamBW[p.key]||0)+bv; teamB+=bv; }
+        });
+        if(any) ppl++;
+      });
+      const teamEff = (haveBilled && teamC>0 && teamB>0) ? Math.round(teamB/teamC*100) : null;
+
+      // Team efficiency banner (front and center).
+      let banner='';
+      if(haveBilled && !isDay && teamEff!=null){
+        banner='<div class="score-team"><div class="st-eff '+effClass(teamEff)+'">'+teamEff+'%</div>'+
+          '<div class="st-meta"><div class="st-label">Team average efficiency</div>'+
+          '<div class="st-sub">'+teamB.toFixed(0)+' billed ÷ '+teamC.toFixed(0)+' clocked hrs · '+ppl+' mechanics</div></div></div>';
+      } else {
+        banner='<div class="score-team"><div class="st-eff st-plain">'+teamC.toFixed(0)+'</div>'+
+          '<div class="st-meta"><div class="st-label">Team clocked hours</div>'+
+          '<div class="st-sub">'+ppl+' mechanics'+(isDay?' · switch to Weekly for team efficiency':'')+'</div></div></div>';
+      }
+
+      // Team row cell for the chosen metric.
+      function teamCell(key){
+        if(metric==='clocked') return (teamCW[key]||0).toFixed(1);
+        if(metric==='billed') return (teamBW[key]!=null?teamBW[key]:0).toFixed(1);
+        const c=teamCW[key], b=teamBW[key];
+        if(!c || b==null) return '—';
+        const e=Math.round(b/c*100); return '<span class="eff '+effClass(e)+'">'+e+'%</span>';
+      }
+
+      let html=banner+'<table class="score-table score-wide"><thead><tr><th>Mechanic</th>';
+      periods.forEach(p=>html+='<th>'+esc(p.label||fmtWeek(p.key))+'</th>');
+      html+='<th class="tot-col">Clocked</th>';
+      if(haveBilled && !isDay) html+='<th class="tot-col">Billed</th><th class="tot-col">Eff.</th>';
+      html+='</tr></thead><tbody>';
+      clocked.byPerson.forEach((person,i)=>{
+        const b = billedMap[normName(person.name)];
+        // Totals over the DISPLAYED periods.
+        let cSum=0, bSum=0;
+        periods.forEach(p=>{ const cv=person.weekHours[p.key]; if(cv!=null) cSum+=cv; const bv=b&&b.weekHours?b.weekHours[p.key]:null; if(bv!=null) bSum+=bv; });
+        const effTot = (haveBilled && cSum>0 && bSum>0) ? Math.round(bSum/cSum*100) : null;
+        html+='<tr>'+whoCell(i,person.name,person.title);
+        periods.forEach(p=>{ html+='<td>'+cell(person,b,p.key)+'</td>'; });
+        html+='<td class="tot-col tot">'+cSum.toFixed(1)+'</td>';
+        if(haveBilled && !isDay){
+          html+='<td class="tot-col">'+(b?bSum.toFixed(1):'—')+'</td>';
+          html+='<td class="tot-col">'+(effTot!=null?'<span class="eff '+effClass(effTot)+'">'+effTot+'%</span>':'—')+'</td>';
+        }
+        html+='</tr>';
+      });
+      // Team total row.
+      html+='</tbody><tfoot><tr class="team-row"><td class="who"><span class="score-rank team-rank">Σ</span><span class="who-name">Team average<span class="who-title">'+ppl+' mechanics</span></span></td>';
+      periods.forEach(p=>{ html+='<td>'+teamCell(p.key)+'</td>'; });
+      html+='<td class="tot-col tot">'+teamC.toFixed(1)+'</td>';
+      if(haveBilled && !isDay){
+        html+='<td class="tot-col tot">'+teamB.toFixed(1)+'</td>';
+        html+='<td class="tot-col">'+(teamEff!=null?'<span class="eff '+effClass(teamEff)+'">'+teamEff+'%</span>':'—')+'</td>';
+      }
+      html+='</tr></tfoot></table>';
+      $('scoreBody').innerHTML=html;
+      $('scoreFoot').innerHTML=(isDay?'Each column is one <b>day</b>. ':'Weeks run <b>Monday–Sunday</b>. ')
+        +'<b>Clocked</b> = Connecteam time on the clock; <b>Billed</b> = Fullbay completed (invoiced) hours; <b>Efficiency = billed ÷ clocked</b>. '
+        +(haveBilled?(isDay?'Switch to <b>Weekly</b> to see billed hours & efficiency.':'Use <b>↻ Refresh billed</b> to re-pull the latest completed hours from Fullbay.')
+          :'No billed hours yet — press <b>↻ Refresh billed</b> to pull completed hours from Fullbay.');
+    }
+
+    function loadScore(){
+      const start=$('scoreFrom').value, end=$('scoreTo').value;
+      $('scoreBody').innerHTML='<div class="score-empty">Loading…</div>';
+      const qs='groupBy='+scoreGroup+(start?'&start='+start:'')+(end?'&end='+end:'');
+      Promise.all([
+        fetch('/api/clocked?'+qs).then(r=>r.json()).catch(()=>null),
+        fetch('/api/billed').then(r=>r.json()).catch(()=>null),
+      ]).then(([clocked, billed])=>renderScore(clocked, billed));
+    }
+    function setQuickRange(kind){
+      const today=new Date(); let from=new Date(today), to=new Date(today);
+      if(kind==='today'){ scoreGroup='day'; }
+      else if(kind==='thisweek'){ const dow=(today.getDay()+6)%7; from=new Date(today); from.setDate(from.getDate()-dow); scoreGroup='day'; }
+      else if(kind==='4w'){ from.setDate(from.getDate()-27); scoreGroup='week'; }
+      else if(kind==='8w'){ from.setDate(from.getDate()-55); scoreGroup='week'; }
+      $('scoreFrom').value=isoOf(from); $('scoreTo').value=isoOf(to);
+      syncGroupButtons();
+      loadScore();
+    }
+    function syncGroupButtons(){
+      document.querySelectorAll('#scoreGroup .seg-btn').forEach(b=>b.classList.toggle('active', b.dataset.grp===scoreGroup));
+      document.querySelectorAll('#scoreMetric .seg-btn').forEach(b=>b.classList.toggle('active', b.dataset.metric===scoreMetric));
+    }
+
+    const closeScore=()=>$('scoreOverlay').classList.remove('open');
+    $('openScore').onclick=()=>{
+      $('menu').classList.remove('open');
+      // Default range: last 6 weeks ending today.
+      const today=new Date(); const from=new Date(today); from.setDate(from.getDate()-41);
+      $('scoreTo').value=isoOf(today); $('scoreFrom').value=isoOf(from);
+      scoreGroup='week'; scoreMetric='eff'; syncGroupButtons();
+      $('scoreOverlay').classList.add('open');
+      loadScore();
+    };
+    $('scoreApply').onclick=loadScore;
+    document.querySelectorAll('#scoreGroup .seg-btn').forEach(b=>{ b.onclick=()=>{ scoreGroup=b.dataset.grp; syncGroupButtons(); loadScore(); }; });
+    document.querySelectorAll('#scoreMetric .seg-btn').forEach(b=>{ b.onclick=()=>{ scoreMetric=b.dataset.metric; syncGroupButtons(); loadScore(); }; });
+    document.querySelectorAll('.score-quick .chip-btn:not(.chip-refresh)').forEach(b=>{ b.onclick=()=>setQuickRange(b.dataset.quick); });
+    $('scoreRefresh').onclick = async () => {
+      const btn=$('scoreRefresh'); const prev=btn.textContent; btn.textContent='↻ Refreshing…'; btn.disabled=true;
+      try{
+        const r=await fetch('/api/refresh-billed',{method:'POST'});
+        if(r.status===409){ const d=await r.json().catch(()=>({})); btn.textContent=(d.startedBy?d.startedBy+' is busy':'Busy — try again'); }
+        else { addLine('Pulling completed hours from Fullbay… (sign in if a Fullbay window opens)'); }
+      }catch(e){ /* ignore */ }
+      setTimeout(()=>{ btn.textContent=prev; btn.disabled=false; }, 4000);
+    };
+    $('closeScore').onclick=closeScore; $('okScore').onclick=closeScore;
+    $('scoreOverlay').onclick=(e)=>{ if(e.target===$('scoreOverlay')) closeScore(); };
+    const busyMsg = async (r) => { const d=await r.json().catch(()=>({})); addLine('Already in use'+(d.startedBy?' — '+d.startedBy+' is running it right now':'')+'. It will free up when they finish (or press Stop).'); };
+    $('run').onclick = async () => { const r=await fetch('/api/run',{method:'POST'}); if(r.status===409) busyMsg(r); };
+    $('connect').onclick = async () => {
+      const r=await fetch('/api/connect-fullbay',{method:'POST'});
+      if(r.status===409) busyMsg(r); else addLine('Opening Fullbay sign-in on the shop computer…');
+    };
+    $('connectVorto').onclick = async () => {
+      const r=await fetch('/api/connect-vorto',{method:'POST'});
+      if(r.status===409) busyMsg(r); else addLine('Opening Vorto portal sign-in on the shop computer…');
+    };
+    $('stop').onclick = async () => { addLine('Stopping…'); await fetch('/api/cancel',{method:'POST'}); };
+    $('view').onclick = () => window.open('/report','_blank');
+    $('refreshReport').onclick = () => { loadReport(); };
+    // Building the PDF takes a few seconds, so fetch it as a blob with a "Building…"
+    // label rather than a plain link (which would hang with no feedback).
+    $('pdf').onclick = async () => {
+      const btn=$('pdf'), lbl=$('pdfLabel');
+      if(btn.disabled) return;
+      btn.disabled=true; const prev=lbl.textContent; lbl.textContent='Building…';
+      try{
+        const r=await fetch('/report-pdf');
+        if(!r.ok) throw new Error(await r.text().catch(()=>'')||('HTTP '+r.status));
+        const blob=await r.blob();
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement('a'); a.href=url; a.download='audit-report.pdf';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(()=>URL.revokeObjectURL(url), 10000);
+      }catch(e){ addLine('Could not build PDF — '+(e.message||e)); }
+      finally{ lbl.textContent=prev; btn.disabled=false; }
+    };
+
+    fetch('/api/status').then(r=>r.json()).then(s=>{
+      if(s.running){ setProg(0, 'In progress…', true); lastKind=s.kind||''; if(s.kind!=='signin'){ resetLiveStats(); showReportState('building'); } }
+      if(s.lines&&s.lines.length){ log.textContent=''; s.lines.forEach(m=>{ if(m.type==='log'){addLine(m.line); handleLogForProgress(m.line); updateLiveStats(m.line); if(/orders.*findings/i.test(m.line)) showSummary(m.line);} }); }
+      setRunning(s.running, s.startedBy, s.kind);
+      if(!s.running){ hideProg(); if(s.reportExists) loadReport(); else showReportState('empty'); }
+      if(s.reportExists){ $('view').disabled=false; $('pdf').disabled=false; }
+    });
+    loadDashboard();
+
+    /* settings */
+    fetch('/api/config').then(r=>r.json()).then(c=>{
+      $('maxOrders').value=c.maxOrders??0; $('sheetFile').value=c.sheetFile||''; $('sheetYear').value=c.sheetYear||''; $('signupCode').value=c.signupCode||'';
+      $('sheetLinks').value=(c.sheets||[]).join('\n');
+      $('googleApiKey').value=''; $('googleApiKey').placeholder = c.googleApiKeySet ? '•••••••• (saved — leave blank to keep)' : 'not set';
+      $('fullbayUser').value=c.fullbayUser||'';
+      $('fullbayPassword').value=''; $('fullbayPassword').placeholder = c.fullbayCredsSet ? '•••••••• (saved — leave blank to keep)' : 'enter password';
+      $('vortoUser').value=c.vortoUser||'';
+      $('vortoPassword').value=''; $('vortoPassword').placeholder = c.vortoCredsSet ? '•••••••• (saved — leave blank to keep)' : 'enter password';
+      $('checkDuplicatePhotos').checked=c.checkDuplicatePhotos!==false; $('checkSheetCompletion').checked=c.checkSheetCompletion!==false;
+    });
+    const openS=()=>{ $('menu').classList.remove('open'); $('settingsOverlay').classList.add('open'); };
+    const closeS=()=>$('settingsOverlay').classList.remove('open');
+    $('openSettings').onclick=openS; $('closeSettings').onclick=closeS; $('cancelSettings').onclick=closeS;
+    $('settingsOverlay').onclick=(e)=>{ if(e.target===$('settingsOverlay')) closeS(); };
+
+    /* About */
+    const openAbout=()=>{ $('menu').classList.remove('open'); $('aboutOverlay').classList.add('open'); };
+    const closeAbout=()=>$('aboutOverlay').classList.remove('open');
+    $('openAbout').onclick=openAbout; $('closeAbout').onclick=closeAbout; $('okAbout').onclick=closeAbout;
+    $('aboutOverlay').onclick=(e)=>{ if(e.target===$('aboutOverlay')) closeAbout(); };
+
+    /* Active Users */
+    const closeUsers=()=>$('usersOverlay').classList.remove('open');
+    $('openUsers').onclick=async()=>{
+      $('menu').classList.remove('open'); $('usersOverlay').classList.add('open');
+      $('usersList').innerHTML='<div style="color:#8a94a6;font-size:13px">Loading…</div>';
+      try{
+        const {users}=await (await fetch('/api/users')).json();
+        $('usersList').innerHTML = (users||[]).map(u=>{
+          const initials=(u.name||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
+          const joined=u.created?(' · joined '+new Date(u.created).toLocaleDateString()):'';
+          return '<div class="user-row'+(u.online?' online':'')+'">'+
+            '<div class="user-av">'+initials+'</div>'+
+            '<div><div class="un">'+esc(u.name)+'</div><div class="ue">'+esc(u.email)+joined+'</div></div>'+
+            '<div class="udot"><i></i>'+(u.online?'Online':'Offline')+'</div></div>';
+        }).join('') || '<div style="color:#8a94a6">No accounts yet.</div>';
+      }catch(e){ $('usersList').innerHTML='<div style="color:#b91c1c">Could not load users.</div>'; }
+    };
+    $('closeUsers').onclick=closeUsers; $('okUsers').onclick=closeUsers;
+    $('usersOverlay').onclick=(e)=>{ if(e.target===$('usersOverlay')) closeUsers(); };
+    $('saveSettings').onclick=async()=>{
+      await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        maxOrders:Number($('maxOrders').value)||0, sheetFile:$('sheetFile').value.trim(), sheetYear:$('sheetYear').value.trim(),
+        signupCode:$('signupCode').value.trim(),
+        sheets:$('sheetLinks').value.split('\n').map(s=>s.trim()).filter(Boolean), googleApiKey:$('googleApiKey').value.trim(),
+        fullbayUser:$('fullbayUser').value.trim(), fullbayPassword:$('fullbayPassword').value,
+        vortoUser:$('vortoUser').value.trim(), vortoPassword:$('vortoPassword').value,
+        checkDuplicatePhotos:$('checkDuplicatePhotos').checked, checkSheetCompletion:$('checkSheetCompletion').checked })});
+      $('fullbayPassword').value=''; $('googleApiKey').value=''; $('vortoPassword').value='';
+      const s=$('saved'); s.classList.add('show'); setTimeout(()=>{s.classList.remove('show'); closeS();},900);
+    };
+  }
+
+  checkAuth();
+</script>
+</body>
+</html>

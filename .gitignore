@@ -1,0 +1,56 @@
+# ============================================================================
+# SECURITY: never commit credentials, sessions, or shop data to the update repo.
+# The auto-update repo should contain CODE ONLY. Everything below stays local.
+# ============================================================================
+
+# --- Secrets / logins (NEVER push) — broad patterns + explicit names ---
+*credentials*.json
+*service-account*.json
+*-creds.json
+fullbay-credentials.json
+vorto-credentials.json
+google-credentials.json
+google-service-account.json
+connecteam-credentials.json
+config.json
+
+# --- Per-machine accounts & saved browser sessions ---
+users.json
+.fb-profile/
+.vorto-profile/
+.fb-logintest/
+.vorto-logincheck/
+.vorto-logintest/
+*.pid
+
+# --- Runtime output / data ---
+photos/
+*.xlsx
+audit-report.html
+audit-report.pdf
+audit-results.csv
+audit-summary.json
+fullbay-completed-hours.json
+fb-ch-*.html
+fb-ch-*.json
+*-probe.txt
+freeaudit-qr.png
+
+# --- Build artifacts & dependencies (not needed in the repo) ---
+node_modules/
+installer-build/
+*.exe
+
+# --- Keys / certificates (NEVER push) ---
+*.key
+*.crt
+*.pem
+*.pfx
+*.ts.net.*
+
+# --- Editor / tooling local state ---
+.claude/
+
+# --- Misc local files ---
+Office.mhtml
+flss_audit_site.html
