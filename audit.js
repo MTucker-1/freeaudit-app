@@ -17,7 +17,7 @@ const crypto = require('crypto');
 const ExcelJS = require('exceljs');
 const gsheets = require('./gsheets');
 const vorto = require('./vorto');
-const { runAudit, isServiceCall } = require('./checks');
+const { runAudit, isServiceCall, classify } = require('./checks');
 
 const CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
 const PROFILE_DIR = path.join(__dirname, '.fb-profile');
@@ -476,17 +476,19 @@ async function runFull(page, context) {
 
         // Service-call identifier: real "Service Call (In/Out Hours)", NOT "Drive to unit (Service Call)".
         const serviceCall = so.actionItems.some((a) => isServiceCall(a.originalNote));
+        // The Google-sheet tracker is for INSPECTION completion only, so Check G applies
+        // ONLY to inspection orders (BIT, DOT/PM, PM Only). Service calls and pure repairs
+        // aren't on the tracker and must NOT be flagged. (Vorto Check H still applies to all.)
+        const hasInspection = so.actionItems.some((a) => classify(a.originalNote).isInspection);
 
         // Check G — is this unit marked complete in the current-year tracker tabs?
-        // SKIPPED for service calls: the tracker is for INSPECTION completion only, so a
-        // service-call order won't be in it and must NOT be flagged as "not complete".
         const unitNum = so.unitNumber || r.unit;
         let sheetComplete; let sheetStatus;
         if (sheet) {
           const entry = sheet.map.get(normUnit(unitNum));
           sheetComplete = !!(entry && entry.complete);
           sheetStatus = entry ? entry.status : 'Not found';
-          if (!sheetComplete && !serviceCall) {
+          if (!sheetComplete && hasInspection) {
             findings.push({
               check: 'G', severity: 'warning',
               title: 'Unit not marked complete in tracker',
