@@ -25,6 +25,15 @@ const MODE = (process.argv[2] || 'full').toLowerCase();
 
 const log = (...a) => console.log(...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Run fn over items with at most `limit` running at once (speeds up the many
+// independent note/photo fetches per order without hammering Fullbay).
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let idx = 0;
+  const worker = async () => { while (idx < items.length) { const i = idx++; out[i] = await fn(items[i], i); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length || 1) }, worker));
+  return out;
+}
 // page.$ can throw "Execution context was destroyed" if the page navigates
 // mid-check (e.g. a session-timeout redirect). Treat that as "not found".
 const safe$ = async (page, sel) => { try { return await page.$(sel); } catch { return null; } };
@@ -463,12 +472,13 @@ async function runFull(page, context) {
         // (especially "No Parts") can read what the note actually says.
         const notes = [];
         if (CONFIG.includeNotes !== false) {
-          for (const ai of so.actionItems) {
-            if (!ai.noteCount || ai.noteCount <= 0) { ai.notes = []; continue; }
+          so.actionItems.forEach((ai) => { if (!ai.noteCount || ai.noteCount <= 0) ai.notes = []; });
+          const withNotes = so.actionItems.filter((ai) => ai.noteCount > 0);
+          await mapLimit(withNotes, 6, async (ai) => {
             const list = await fetchActionItemNotes(context, ai.id);
             ai.notes = list;
             list.forEach((n) => notes.push({ aiNumber: ai.number || ai.id, ...n }));
-          }
+          });
         }
 
         const findings = runAudit(so);
@@ -517,18 +527,22 @@ async function runFull(page, context) {
         });
 
         // Download photos: save each locally (for the report) and fingerprint it.
+        // Photo-URL lookups and the downloads themselves run concurrently (capped),
+        // which is the biggest per-order speedup for orders with many photos.
         let photoCt = 0;
         if (doPhotos) {
-          for (const ai of so.actionItems) {
-            if (!ai.photoCount || ai.photoCount <= 0) continue;
-            const urls = await fetchActionItemPhotoUrls(context, ai.id);
-            for (const u of urls) {
-              const saved = await fetchAndStorePhoto(context, u, photosDir);
-              if (saved) {
-                allPhotos.push({ soNumber: so.soNumber, aiNumber: ai.number || ai.id, technician: ai.technician || '', url: u, hash: saved.hash, localFile: saved.localFile });
-                photoCt++;
-              }
-            }
+          const withPhotos = so.actionItems.filter((ai) => ai.photoCount > 0);
+          const urlLists = await mapLimit(withPhotos, 6, (ai) => fetchActionItemPhotoUrls(context, ai.id));
+          const tasks = [];
+          withPhotos.forEach((ai, k) => (urlLists[k] || []).forEach((u) => tasks.push({ ai, u })));
+          const saved = await mapLimit(tasks, 6, async (t) => {
+            const s = await fetchAndStorePhoto(context, t.u, photosDir);
+            return s ? { ai: t.ai, url: t.u, hash: s.hash, localFile: s.localFile } : null;
+          });
+          for (const s of saved) {
+            if (!s) continue;
+            allPhotos.push({ soNumber: so.soNumber, aiNumber: s.ai.number || s.ai.id, technician: s.ai.technician || '', url: s.url, hash: s.hash, localFile: s.localFile });
+            photoCt++;
           }
         }
         log(`${so.actionItems.length} items, ${findings.length} issue(s)` + (doPhotos ? `, ${photoCt} photos` : ''));
