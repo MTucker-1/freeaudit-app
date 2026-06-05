@@ -42,7 +42,7 @@ $cfg.headless = $false
 Write-Json (Join-Path $app 'config.json') ($cfg | ConvertTo-Json -Depth 10)
 Write-Json (Join-Path $app 'version.json') '{ "version": "1.0.0" }'
 # Update channel — set "repo" to OWNER/REPO once the GitHub repo exists (see TEAM-INSTALL.md).
-Write-Json (Join-Path $app 'update.json') '{ "repo": "OWNER/REPO", "branch": "main", "version": "1.0.0" }'
+Write-Json (Join-Path $app 'update.json') '{ "repo": "MTucker-1/freeaudit-app", "branch": "main", "version": "1.0.0" }'
 # Per-user logins start blank — each teammate enters their own in Settings.
 Write-Json (Join-Path $app 'fullbay-credentials.json') '{ "username": "", "password": "" }'
 Write-Json (Join-Path $app 'vorto-credentials.json') '{ "username": "", "password": "" }'

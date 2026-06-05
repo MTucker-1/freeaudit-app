@@ -474,14 +474,19 @@ async function runFull(page, context) {
         const findings = runAudit(so);
         const technicians = [...new Set(so.actionItems.map((a) => a.technician).filter(Boolean))];
 
+        // Service-call identifier: real "Service Call (In/Out Hours)", NOT "Drive to unit (Service Call)".
+        const serviceCall = so.actionItems.some((a) => isServiceCall(a.originalNote));
+
         // Check G — is this unit marked complete in the current-year tracker tabs?
+        // SKIPPED for service calls: the tracker is for INSPECTION completion only, so a
+        // service-call order won't be in it and must NOT be flagged as "not complete".
         const unitNum = so.unitNumber || r.unit;
         let sheetComplete; let sheetStatus;
         if (sheet) {
           const entry = sheet.map.get(normUnit(unitNum));
           sheetComplete = !!(entry && entry.complete);
           sheetStatus = entry ? entry.status : 'Not found';
-          if (!sheetComplete) {
+          if (!sheetComplete && !serviceCall) {
             findings.push({
               check: 'G', severity: 'warning',
               title: 'Unit not marked complete in tracker',
@@ -491,9 +496,6 @@ async function runFull(page, context) {
             });
           }
         }
-
-        // Service-call identifier: real "Service Call (In/Out Hours)", NOT "Drive to unit (Service Call)".
-        const serviceCall = so.actionItems.some((a) => isServiceCall(a.originalNote));
 
         // Accumulate billed (invoiced) hours per mechanic, bucketed by Mon–Sun week.
         const wk = mondayISO(r.completedDate ? new Date(r.completedDate * 1000) : new Date());
