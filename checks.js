@@ -34,6 +34,12 @@ function isShopSupply(note) {
   return SHOP_SUPPLY_NOTES.some((k) => n.indexOf(k) > -1);
 }
 
+// "R/R" = repair-or-replace. These often legitimately need NO part (rewire,
+// disconnect, weld — e.g. HINGE BUTT), so they're exempt from the "No Parts"
+// check (B). Matches R/R, R\R, R&R, "R / R", etc.
+const RR_RE = /\bR\s*[/\\&]\s*R\b/i;
+function isRR(note) { return RR_RE.test(note || ''); }
+
 // A technician/writer note that explains parts weren't needed — used to suppress the
 // "No Parts but billed labor" flag (Check B) so legitimate no-part jobs aren't flagged red.
 const NO_PART_NEEDED_PATTERNS = [
@@ -121,10 +127,11 @@ function runAudit(so) {
     }
 
     // Check B — marked No Parts but billed repair labor.
-    // Exempt: shop-supply services (e.g. hand rubbers/seals), AND any item whose notes
-    // explain a part wasn't needed (e.g. "no parts needed", "part not needed").
+    // Exempt: shop-supply services (e.g. hand rubbers/seals), R/R (repair-or-replace)
+    // services that often need no part, AND any item whose notes explain a part
+    // wasn't needed (e.g. "no parts needed", "part not needed").
     if (ai.noParts && ai.actualHours > 0 && cls.isRepair && !cls.isInspection
-        && !isShopSupply(ai.originalNote) && !notesJustifyNoParts(ai.notes)) {
+        && !isShopSupply(ai.originalNote) && !isRR(ai.originalNote) && !notesJustifyNoParts(ai.notes)) {
       findings.push({
         check: 'B', severity: 'blocker', technician: tech,
         title: 'Parts not added to ' + label,
@@ -148,4 +155,4 @@ function runAudit(so) {
   return findings;
 }
 
-module.exports = { classify, runAudit, isServiceCall, INSP_KW, REP_KW };
+module.exports = { classify, runAudit, isServiceCall, isRR, INSP_KW, REP_KW };
