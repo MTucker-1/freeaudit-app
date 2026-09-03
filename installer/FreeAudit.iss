@@ -4,7 +4,11 @@
 ; and auto-updates its code from the central channel on launch.
 
 #define AppName "FreeAudit"
-#define AppVer "1.0.0"
+; AppVer is passed in by build-installer.ps1 (/DAppVer=x.y.z) from version.json.
+; The fallback only applies when compiling this script by hand.
+#ifndef AppVer
+  #define AppVer "0.0.0"
+#endif
 
 [Setup]
 AppName={#AppName}

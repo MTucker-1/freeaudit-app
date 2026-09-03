@@ -1,11 +1,12 @@
 /*
  * server.js — FreeAudit local web app (with user accounts).
  *
- * Runs on this PC. Open http://localhost:<port> in a browser. Reach it remotely
- * through a secure private tunnel (see FREEAUDIT-SETUP.md). Your Fullbay login
- * and files stay on this machine.
+ * Runs on this PC and listens on loopback only — nothing is exposed to the network.
+ * Open http://localhost:<port> in a browser. Each person runs their own copy with
+ * their own logins; credentials and files never leave this machine.
  *
- * Start with:  node server.js   (or double-click "Start FreeAudit.bat")
+ * Start with:  node server.js   (or "Start FreeAudit (dev).bat" for auto-reload).
+ * Teammates install FreeAudit-Setup.exe instead — see TEAM-INSTALL.md.
  */
 const express = require('express');
 const { spawn, exec } = require('child_process');
@@ -13,17 +14,22 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');
-const connecteam = require('./connecteam');
+const { readConfig, writeConfig } = require('./settings');
+const { ensureDataDir } = require('./paths');
+const gsheets = require('./gsheets');
 
 // Force-kill a process and all its children (so a stuck audit + its Chromium are fully cleared).
 function killTree(pid) { if (pid) { try { exec('taskkill /PID ' + pid + ' /T /F'); } catch (e) { /* ignore */ } } }
 
-const ROOT = __dirname;
-const CONFIG_PATH = path.join(ROOT, 'config.json');
+// Data (config, accounts, credentials, photos, reports) lives in DATA_DIR — the
+// app folder on a personal install, a per-workspace folder when hosted.
+// Code (public/, audit.js) always resolves from __dirname.
+const ROOT = ensureDataDir();
+const CODE_DIR = __dirname;
 const USERS_PATH = path.join(ROOT, 'users.json');
+const SESSIONS_PATH = path.join(ROOT, 'sessions.json');
 const FBCREDS_PATH = path.join(ROOT, 'fullbay-credentials.json');
 const GOOGLE_CREDS_PATH = path.join(ROOT, 'google-credentials.json');
-const readConfig = () => JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
 const readFbCreds = () => { try { return fs.existsSync(FBCREDS_PATH) ? JSON.parse(fs.readFileSync(FBCREDS_PATH, 'utf8')) : {}; } catch (e) { return {}; } };
 const fbUser = () => { const c = readFbCreds(); return (c.username && !/PUT-YOUR/i.test(c.username)) ? c.username : ''; };
 const fbCredsSet = () => { const c = readFbCreds(); return !!(fbUser() && c.password && !/PUT-YOUR/i.test(c.password)); };
@@ -42,7 +48,28 @@ app.use(express.json());
 const readUsers = () => (fs.existsSync(USERS_PATH) ? JSON.parse(fs.readFileSync(USERS_PATH, 'utf8')) : []);
 const writeUsers = (u) => fs.writeFileSync(USERS_PATH, JSON.stringify(u, null, 2));
 const hashPw = (pw, salt) => crypto.scryptSync(pw, salt, 64).toString('hex');
-const sessions = new Map(); // token -> { name, email }
+
+/* Sessions are persisted to disk so an auto-update (which restarts the engine)
+ * doesn't sign everybody out — the browser still holds a 30-day cookie, and this
+ * keeps the matching server-side entry alive across that restart. */
+const SESSION_MS = 30 * 24 * 3600 * 1000;
+const sessions = new Map(); // token -> { name, email, expires }
+function loadSessions() {
+  try {
+    if (!fs.existsSync(SESSIONS_PATH)) return;
+    const saved = JSON.parse(fs.readFileSync(SESSIONS_PATH, 'utf8'));
+    const now = Date.now();
+    Object.entries(saved || {}).forEach(([token, s]) => {
+      if (s && s.expires > now) sessions.set(token, s);
+    });
+  } catch (e) { /* unreadable session file just means everyone signs in again */ }
+}
+function saveSessions() {
+  try {
+    fs.writeFileSync(SESSIONS_PATH, JSON.stringify(Object.fromEntries(sessions)), 'utf8');
+  } catch (e) { /* non-fatal: sessions still work until the next restart */ }
+}
+loadSessions();
 
 function parseCookies(req) {
   const out = {};
@@ -52,11 +79,21 @@ function parseCookies(req) {
   });
   return out;
 }
-const currentUser = (req) => { const t = parseCookies(req).fa_session; return t ? sessions.get(t) : null; };
+function currentUser(req) {
+  const t = parseCookies(req).fa_session;
+  if (!t) return null;
+  const s = sessions.get(t);
+  if (!s) return null;
+  if (s.expires <= Date.now()) { sessions.delete(t); saveSessions(); return null; }
+  s.lastSeen = Date.now(); // in-memory only; drives the "online now" count
+  return s;
+}
+const ONLINE_MS = 5 * 60 * 1000;
 function startSession(res, user) {
   const token = crypto.randomBytes(24).toString('hex');
-  sessions.set(token, { name: user.name, email: user.email });
-  res.cookie('fa_session', token, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 3600 * 1000 });
+  sessions.set(token, { name: user.name, email: user.email, expires: Date.now() + SESSION_MS });
+  saveSessions();
+  res.cookie('fa_session', token, { httpOnly: true, sameSite: 'lax', maxAge: SESSION_MS });
 }
 
 app.post('/api/register', (req, res) => {
@@ -91,7 +128,7 @@ app.post('/api/login', (req, res) => {
 
 app.post('/api/logout', (req, res) => {
   const t = parseCookies(req).fa_session;
-  if (t) sessions.delete(t);
+  if (t) { sessions.delete(t); saveSessions(); }
   res.clearCookie('fa_session');
   res.json({ ok: true });
 });
@@ -104,7 +141,12 @@ app.get('/api/me', (req, res) => {
 // List everyone with an account (safe fields only), flagging who's signed in now.
 app.get('/api/users', (req, res) => {
   if (!currentUser(req)) return res.status(401).json({ error: 'Not signed in' });
-  const online = new Set([...sessions.values()].map((s) => (s.email || '').toLowerCase()));
+  // "Online" means active in the last few minutes — not merely holding an
+  // unexpired session, which now survives restarts.
+  const cutoff = Date.now() - ONLINE_MS;
+  const online = new Set([...sessions.values()]
+    .filter((s) => (s.lastSeen || 0) > cutoff)
+    .map((s) => (s.email || '').toLowerCase()));
   const users = readUsers()
     .map((u) => ({ name: u.name, email: u.email, created: u.created || '', online: online.has((u.email || '').toLowerCase()) }))
     .sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name));
@@ -140,53 +182,21 @@ app.get('/api/health', requireAuth, (req, res) => {
     const ms = xs.map((f) => fs.statSync(path.join(ROOT, f)).mtimeMs);
     if (ms.length) trackerUpdated = new Date(Math.max(...ms)).toISOString();
   } catch (e) { /* ignore */ }
-  res.json({ trackerUpdated, trackerCount, fullbayCredsSet: fbCredsSet(), connecteamSet: connecteam.isConfigured() });
+  res.json({
+    trackerUpdated, trackerCount,
+    fullbayCredsSet: fbCredsSet(), vortoCredsSet: vortoCredsSet(),
+  });
 });
 
-// Connecteam clocked hours per mechanic over a date range, grouped by week or day
-// (powers the scorecard). Cached briefly per query because each refresh makes
-// several Connecteam API calls.
-const isoLocal = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-const clockedCache = new Map(); // key -> { at, data }
-app.get('/api/clocked', requireAuth, async (req, res) => {
-  if (!connecteam.isConfigured()) return res.json({ configured: false });
-  const groupBy = req.query.groupBy === 'day' ? 'day' : 'week';
-  let start = req.query.start;
-  let end = req.query.end;
-  // Default range: the last 6 weeks ending today.
-  if (!start || !end) {
-    const now = new Date();
-    end = end || isoLocal(now);
-    start = start || isoLocal(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 35));
-  }
-  const ok = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s);
-  if (!ok(start) || !ok(end)) return res.status(400).json({ configured: true, error: 'Dates must be YYYY-MM-DD.' });
-  const key = groupBy + '|' + start + '|' + end;
-  const hit = clockedCache.get(key);
-  if (hit && (Date.now() - hit.at) < 10 * 60 * 1000) return res.json({ configured: true, cached: true, ...hit.data });
+// Week-by-week scorecard: who submits orders, and what they keep missing.
+app.get('/api/scorecard', requireAuth, (req, res) => {
   try {
-    const data = await connecteam.clockedRange(start, end, groupBy);
-    clockedCache.set(key, { at: Date.now(), data });
-    if (clockedCache.size > 40) clockedCache.delete(clockedCache.keys().next().value);
-    res.json({ configured: true, cached: false, ...data });
+    const weeks = Math.min(52, Math.max(1, parseInt(req.query.weeks, 10) || 8));
+    res.json(require('./scorecard').aggregate({ weeks }));
   } catch (e) {
-    res.status(502).json({ configured: true, error: e.message });
+    res.status(500).json({ error: e.message });
   }
 });
-
-// Fullbay "Completed Hours" = billed (invoiced) hours per mechanic by Mon–Sun week.
-// Served from the cached JSON that `node audit.js billed` writes (a Fullbay browser
-// session is required to refresh it, so it can't be fetched live per request).
-app.get('/api/billed', requireAuth, (req, res) => {
-  const f = path.join(ROOT, 'fullbay-completed-hours.json');
-  if (!fs.existsSync(f)) return res.json({ available: false });
-  try {
-    const d = JSON.parse(fs.readFileSync(f, 'utf8'));
-    res.json({ available: true, updatedAt: d.updatedAt || null, weeks: d.weeks || [], byEmployee: d.byEmployee || [] });
-  } catch (e) { res.json({ available: false }); }
-});
-// Refresh billed hours from Fullbay (spawns the scraper; needs a Fullbay session/auto-login).
-app.post('/api/refresh-billed', requireAuth, (req, res) => startChild(['audit.js', 'billed'], res, (currentUser(req) || {}).name, 'billed'));
 
 // Latest-run impact summary for the dashboard.
 app.get('/api/summary', requireAuth, (req, res) => {
@@ -209,7 +219,7 @@ function startChild(args, res, byName, kind) {
   if (running) return res.status(409).json({ error: 'already running', startedBy: runStartedBy, kind: runKind });
   running = true; runStartedBy = byName || 'someone'; runKind = kind || 'audit'; events = [];
   broadcast({ type: 'start', by: runStartedBy, kind: runKind });
-  child = spawn(process.execPath, args, { cwd: ROOT });
+  child = spawn(process.execPath, args.map((a, i) => (i === 0 ? path.join(CODE_DIR, a) : a)), { cwd: ROOT, env: { ...process.env, FREEAUDIT_DATA_DIR: ROOT } });
   const childPid = child.pid;
   let buf = '';
   child.stdout.on('data', (d) => {
@@ -240,6 +250,24 @@ function startChild(args, res, byName, kind) {
 app.post('/api/run', requireAuth, (req, res) => startChild(['audit.js'], res, (currentUser(req) || {}).name, 'audit'));
 // Opens Fullbay's login in the automation browser (on the host PC) so a person can sign in.
 app.post('/api/connect-fullbay', requireAuth, (req, res) => startChild(['audit.js', 'login'], res, (currentUser(req) || {}).name, 'signin'));
+// Audits the OPEN service orders only. Kept separate from Run Audit because the
+// two answer different questions and each is worth running on its own.
+app.post('/api/run-open', requireAuth, (req, res) => startChild(['audit.js', 'open'], res, (currentUser(req) || {}).name, 'open'));
+
+app.get('/open-report', requireAuth, (req, res) => {
+  const f = path.join(ROOT, 'open-report.html');
+  if (!fs.existsSync(f)) {
+    return res.send('<p style="font-family:Segoe UI;color:#566380;padding:24px">'
+      + 'No open-SO audit yet — press <b>Run Open Audit</b> to build one.</p>');
+  }
+  res.sendFile(f);
+});
+
+// Corrects Bill To / Ship To on every Ready-to-Invoice estimate to match its
+// labour location. This is the ONLY action that writes to Fullbay, which is why
+// it is a separate button rather than part of Run Audit.
+app.post('/api/fix-addresses', requireAuth, (req, res) => startChild(['audit.js', 'fixaddresses'], res, (currentUser(req) || {}).name, 'addresses'));
+
 // Opens the Vorto vendor portal in the automation browser (on the host PC) so a person can sign in.
 app.post('/api/connect-vorto', requireAuth, (req, res) => startChild(['audit.js', 'vorto-login'], res, (currentUser(req) || {}).name, 'signin'));
 
@@ -260,6 +288,8 @@ app.get('/api/config', requireAuth, (req, res) => {
     signupCode: c.signupCode,
     sheets: Array.isArray(c.sheets) ? c.sheets : (c.sheetUrl ? [c.sheetUrl] : []),
     googleApiKeySet: googleApiKeySet(), // whether a live-read key is saved; never the key itself
+    // Sheets must be shared with this address for the tracker check to read them.
+    serviceAccountEmail: gsheets.serviceAccountEmail(),
     fullbayUser: fbUser(), fullbayCredsSet: fbCredsSet(), // username only; never the password
     vortoUser: vortoUser(), vortoCredsSet: vortoCredsSet(), // username only; never the password
   });
@@ -269,7 +299,7 @@ app.post('/api/config', requireAuth, (req, res) => {
   ['maxOrders', 'sheetFile', 'sheetYear', 'checkDuplicatePhotos', 'checkSheetCompletion', 'signupCode', 'sheets'].forEach((k) => {
     if (req.body[k] !== undefined) c[k] = req.body[k];
   });
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2), 'utf8');
+  writeConfig(c);
   // Google Sheets API key goes in its own file. Only updates when a new key is
   // typed (blank = keep the existing one).
   if (req.body.googleApiKey) {
@@ -350,10 +380,16 @@ app.get('/report-pdf', requireAuth, async (req, res) => {
 app.use('/photos', requireAuth, express.static(path.join(ROOT, 'photos')));
 
 /* ---------------- UI (public static) ---------------- */
-app.use(express.static(path.join(ROOT, 'public')));
+app.use(express.static(path.join(CODE_DIR, 'public')));
 
-const PORT = readConfig().webPort || 4400;
-app.listen(PORT, () => {
-  const url = PORT === 80 ? 'http://freeaudit.com' : 'http://freeaudit.com:' + PORT;
-  console.log('FreeAudit running at ' + url);
+// Desktop install: loopback, so nothing is exposed to the network. Hosted (PORT
+// set by the platform): 0.0.0.0, or the platform's router can't reach us.
+const startCfg = readConfig();
+const PORT = startCfg.webPort || 4477;
+const HOST = startCfg.bindHost || '127.0.0.1';
+app.listen(PORT, HOST, () => {
+  const where = HOST === '127.0.0.1'
+    ? 'http://localhost' + (PORT === 80 ? '' : ':' + PORT)
+    : HOST + ':' + PORT;
+  console.log('FreeAudit running at ' + where);
 });

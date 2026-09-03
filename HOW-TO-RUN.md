@@ -1,4 +1,7 @@
-# FLSS Ready-to-Invoice Auditor — How to run it
+# FreeAudit — running the audit from the command line
+
+For the app and the installer, see [README.md](README.md) and
+[TEAM-INSTALL.md](TEAM-INSTALL.md). This page covers the `node audit.js` CLI.
 
 This tool logs into Fullbay, opens every service order that's in **Ready to Invoice**,
 reads its Action Items tab, and runs these checks:
@@ -8,10 +11,14 @@ reads its Action Items tab, and runs these checks:
 - **B · Parts** — "No Parts" but billed repair labor
 - **C · Inspections** — DOT/PM/inspection complaints with no attachment (paperwork) on the SO
 - **D · Hours** — Ready/Invoiced services with 0.00 invoiced hours (need labor entered in Fullbay)
-- **E · PO** — missing, irregular (e.g. leading colon), or duplicated PO numbers
-  (a valid PO is "MT-" followed by exactly 8 letters/numbers)
+- **E · PO** — missing or irregular PO numbers, e.g. a leading colon, stray spaces, or the
+  wrong length (a valid PO is "MT-" followed by exactly 8 letters/numbers)
 - **F · Duplicate photo** — the exact same photo (byte-for-byte) reused on a **different**
   service order — catches reused/"pencil-whipped" photos. (Reuse within one order is ignored.)
+- **G · Tracker** — the unit is not marked complete in the Google Sheet tracker. Applies to
+  inspection orders only (BIT / DOT-PM / PM Only); service calls and repairs are exempt.
+  Read live from Google Sheets, falling back to the newest local .xlsx export.
+- **H · Vorto** — the order's MT is not RESOLVED in the Vorto vendor portal. Checked live.
 
 The report also shows **clickable photo thumbnails** for each action item (click to enlarge);
 reused-across-orders photos are outlined in red with a "REUSED" badge. Photos are saved into
@@ -24,9 +31,9 @@ Check D now flags missing invoiced hours instead.)
 ## Running it
 
 1. Open **PowerShell** (Start menu → type "PowerShell" → Enter).
-2. Go to the folder:
+2. Go to the folder FreeAudit lives in, e.g.:
    ```
-   cd C:\Users\mitch\flss-audit
+   cd $HOME\flss-audit
    ```
 3. Run the audit:
    ```
@@ -52,6 +59,10 @@ first 5 orders. Set it back to `0` to do all of them.
 - **checkDuplicatePhotos** — `true` downloads and fingerprints every photo to catch reused
   ones (Check F). Set to `false` for a much faster run that skips photo duplicate detection.
 - **imageLimit** — max photos fetched per action item when fingerprinting (default 50).
+- **checkSheetCompletion** / **checkVortoResolved** — turn checks G and H off for a faster run.
+
+Any key you leave out falls back to the shipped default in `settings.js`, so an older
+`config.json` still works after an update.
 
 ## If something breaks
 

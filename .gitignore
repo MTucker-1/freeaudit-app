@@ -16,6 +16,7 @@ config.json
 
 # --- Per-machine accounts & saved browser sessions ---
 users.json
+sessions.json
 .fb-profile/
 .vorto-profile/
 .fb-logintest/
@@ -29,6 +30,7 @@ photos/
 audit-report.html
 audit-report.pdf
 audit-results.csv
+audit-results.json
 audit-summary.json
 fullbay-completed-hours.json
 fb-ch-*.html
@@ -54,3 +56,16 @@ installer-build/
 # --- Misc local files ---
 Office.mhtml
 flss_audit_site.html
+
+# Shop facility addresses / tax mapping — business data, not for the public repo
+tax-locations.json
+
+# Runtime output and saved browser profiles (session cookies!) — never publish
+.fb-profile-*/
+scorecard-history.json
+open-sos.json
+open-report.html
+address-fixes.json
+estimate-dump.txt
+estimate-view.png
+so-*.png

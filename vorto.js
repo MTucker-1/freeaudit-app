@@ -21,9 +21,10 @@
 const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
+const { DATA_DIR, dataPath } = require('./paths');
 
-const PROFILE_DIR = path.join(__dirname, '.vorto-profile');
-const CREDS_PATH = path.join(__dirname, 'vorto-credentials.json');
+const PROFILE_DIR = dataPath('.vorto-profile');
+const CREDS_PATH = dataPath('vorto-credentials.json');
 const URL = 'https://vorto-maint-tickets.web.app/vendor-portal';
 const TICKETS_RE = /maintenance\.api\.5f\.app\/api\/v1\/vendors\/.*\/tickets/i;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

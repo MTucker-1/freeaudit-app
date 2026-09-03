@@ -12,7 +12,7 @@ if (-not $git) { $git = 'C:\Program Files\Git\cmd\git.exe' }
 if (-not (Test-Path $git)) { Write-Host 'Git is not installed. Install Git, then re-run.'; exit 1 }
 
 # Safety: refuse to publish if any secret is tracked by git.
-$danger = @('fullbay-credentials.json','vorto-credentials.json','google-service-account.json','google-credentials.json','connecteam-credentials.json','config.json','users.json')
+$danger = @('fullbay-credentials.json','vorto-credentials.json','google-service-account.json','google-credentials.json','config.json','users.json','sessions.json')
 $tracked = & $git ls-files
 foreach ($d in $danger) {
   if ($tracked -contains $d) { Write-Host ("ABORT: " + $d + " is tracked by git - it must stay out of the repo. Check .gitignore."); exit 1 }

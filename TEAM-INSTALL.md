@@ -35,29 +35,21 @@ itself whenever you publish a new version.
 - When you ship a new installer (only needed if Node/browser/deps change — rare),
   replace the file at the same link.
 
-### B) Turn on auto-update (GitHub channel) — ~5 minutes, needs your GitHub login
-Auto-update is built in but **dormant until you point it at a repo.** Do this once:
+### B) Auto-update channel — already set up
+Updates are published from this repo:
 
-1. Create a **free GitHub account** (if you don't have one) and a **new public
-   repository**, e.g. `freeaudit-app`. (Public so installs can pull updates with
-   no token. Only CODE goes there — never secrets; see Security below.)
-2. In this folder, set up git and push the code (PowerShell):
-   ```powershell
-   git init
-   git add -A
-   git commit -m "FreeAudit v1.0.0"
-   git branch -M main
-   git remote add origin https://github.com/<your-username>/freeaudit-app.git
-   git push -u origin main
-   ```
-   (Git will prompt you to sign in to GitHub the first time.)
-3. Tell FreeAudit where to look: open **`installer\config`**… actually set the
-   repo in the build by editing `build-installer.ps1` — change the update line's
-   `"repo": "OWNER/REPO"` to `"repo": "<your-username>/freeaudit-app"`, then
-   re-run `.\build-installer.ps1` once. That bakes the channel into the installer
-   you distribute. (Claude can do this for you — just give the repo name.)
+- **Repo:** `MTucker-1/freeaudit-app` (public, code only — never secrets)
+- Baked into every installer by `build-installer.ps1`, which writes `update.json`
+  next to the app.
+- On launch, `installer\update.ps1` compares the installed version against
+  `version.json` on `main`. Newer? It pulls the code zip and swaps in the app
+  code only — never `node.exe`, the browser engine, `node_modules`, credentials,
+  `config.json`, or saved logins.
+- It **fails safe**: offline, a bad download, or an unset channel all mean "keep
+  the current version and run it."
 
-After that, the workflow forever is:
+Nothing to do here unless you move the repo — then change the `repo` line in
+`build-installer.ps1` and rebuild the installer once.
 
 ### C) Publish an update (any time you/Claude change the code)
 ```powershell

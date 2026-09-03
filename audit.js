@@ -1,7 +1,7 @@
 /*
  * audit.js — Fullbay "Ready to Invoice" auto-auditor.
  *
- * Usage (from the C:\Users\mitch\flss-audit folder):
+ * Usage (run from the folder this file lives in):
  *   node audit.js probe     → calibration run: logs in, opens the list, clicks the
  *                             first order, and reports what it found. Use this first.
  *   node audit.js           → full run: audits every order and writes the report + CSV.
@@ -17,10 +17,11 @@ const crypto = require('crypto');
 const ExcelJS = require('exceljs');
 const gsheets = require('./gsheets');
 const vorto = require('./vorto');
-const { runAudit, isServiceCall, classify } = require('./checks');
+const { runAudit, runOpenAudit, isServiceCall, classify } = require('./checks');
+const { DATA_DIR, dataPath } = require('./paths');
 
-const CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
-const PROFILE_DIR = path.join(__dirname, '.fb-profile');
+const CONFIG = require('./settings').readConfig();
+const PROFILE_DIR = dataPath('.fb-profile');
 const MODE = (process.argv[2] || 'full').toLowerCase();
 
 const log = (...a) => console.log(...a);
@@ -37,13 +38,6 @@ async function mapLimit(items, limit, fn) {
 // page.$ can throw "Execution context was destroyed" if the page navigates
 // mid-check (e.g. a session-timeout redirect). Treat that as "not found".
 const safe$ = async (page, sel) => { try { return await page.$(sel); } catch { return null; } };
-// The Monday (YYYY-MM-DD) of the week containing a date — weeks run Monday–Sunday.
-function mondayISO(d) {
-  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
-  return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0');
-}
-
 /* ----------------------------------------------------------------------------
  * In-page extraction. This runs INSIDE the live SO page (page.evaluate) and
  * pulls the same elements the drag-and-drop tool reads from saved HTML.
@@ -92,10 +86,26 @@ function extractServiceOrderInPage() {
     const invoicedHours = parseFloat(textOf(c.querySelector('#invoicedHours' + id))) || 0;
     const actualHours = parseFloat(textOf(c.querySelector('#actualHours' + id))) || 0;
 
+    // The status <select> is frequently EMPTY on an order that is still open —
+    // the real state is the first progress step ("Diagnose", "Open",
+    // "Repair In Progress", "Done"). Capture both and prefer whichever is set.
+    const steps = [];
     let noParts = false;
     c.querySelectorAll('.progress-step label').forEach((l) => {
-      if (/^No Parts$/i.test(textOf(l))) noParts = true;
+      const t = textOf(l);
+      if (t) steps.push(t);
+      if (/^No Parts$/i.test(t)) noParts = true;
     });
+    const stepStatus = steps.find((t) => !/^No Parts$/i.test(t)) || '';
+    // Parts started but never priced. Scan the item's text with <select> and
+    // <option> stripped out — the status dropdown lists EVERY status, including
+    // "Waiting On Parts Pricing", so reading raw textContent matches on every
+    // single item.
+    const clone = c.cloneNode(true);
+    clone.querySelectorAll('select, option, datalist, script, template').forEach((n) => n.remove());
+    const bodyText = textOf(clone);
+    const QUOTE = /needs?\s*quote|quote\s*needed|awaiting\s*quote|waiting\s*on\s*parts\s*pricing/i;
+    const needsQuote = QUOTE.test(bodyText) || QUOTE.test(stepStatus) || QUOTE.test(status);
 
     let photoCount = null;
     const pb = c.querySelector('[id^="actionItemImageCount"]');
@@ -110,7 +120,7 @@ function extractServiceOrderInPage() {
     if (nb) { const nt = textOf(nb); noteCount = nt === '' ? 0 : (parseInt(nt, 10) || 0); }
 
     actionItems.push({
-      id, number, status, technician: tech, originalNote,
+      id, number, status, stepStatus, needsQuote, technician: tech, originalNote,
       invoicedHours, actualHours, noParts, photoCount, noteCount,
     });
   });
@@ -141,7 +151,7 @@ async function waitForRows(page, ms = 30000) {
 
 // Read stored Fullbay credentials (local file, never leaves the PC). Returns null if absent/placeholder.
 function readFullbayCreds() {
-  const p = path.join(__dirname, 'fullbay-credentials.json');
+  const p = dataPath('fullbay-credentials.json');
   if (!fs.existsSync(p)) return null;
   try {
     const c = JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -151,60 +161,140 @@ function readFullbayCreds() {
 }
 
 // Try to sign into Fullbay automatically by filling the login form. Returns true if it lands logged in.
+const USER_SELECTOR = 'input[type="email"], input[name*="user" i], input[name*="email" i], '
+  + 'input[id*="user" i], input[id*="email" i], input[autocomplete="username"], input[type="text"]';
+
+/*
+ * Fill Fullbay's login form and submit it.
+ *
+ * Deliberately plain, because the clever version kept failing:
+ *  - page.fill(selector) rather than element handles. A handle grabbed a moment
+ *    earlier goes stale when the page re-renders, and .fill() then throws — the
+ *    old code caught that and returned "login failed" WITHOUT EVER SUBMITTING.
+ *  - a flat wait after submit rather than waitForFunction. Submitting bounces
+ *    through several redirects, and evaluating anything mid-flight throws
+ *    "Execution context was destroyed".
+ * Each step is individually guarded, so one hiccup cannot abandon the sign-in.
+ */
 async function autoLoginFullbay(page) {
   const cred = readFullbayCreds();
   if (!cred) return false;
-  const pw = await safe$(page, 'input[type="password"]');
-  if (!pw) return false; // not on a login page
-  const user = await safe$(page, 'input[type="email"], input[name*="user" i], input[name*="email" i], input[id*="user" i], input[id*="email" i], input[autocomplete="username"], input[type="text"]');
-  try {
-    if (user) await user.fill(cred.username);
-    await pw.fill(cred.password);
-    const btn = await safe$(page, 'button[type="submit"], input[type="submit"]');
-    if (btn) await btn.click({ timeout: 5000 }).catch(() => {});
-    else await page.keyboard.press('Enter');
-    await page.waitForFunction(
-      () => !document.querySelector('input[type="password"]') || !!document.querySelector('#readyToInvoice'),
-      undefined, { timeout: 20000 },
-    ).catch(() => {});
-    await sleep(1500);
-  } catch (e) { return false; }
+  if (!(await safe$(page, 'input[type="password"]'))) return false; // not a login page
+
+  const tryStep = async (fn) => { try { await fn(); return true; } catch (e) { return false; } };
+
+  await tryStep(() => page.fill(USER_SELECTOR, cred.username, { timeout: 10000 }));
+  const typed = await tryStep(() => page.fill('input[type="password"]', cred.password, { timeout: 10000 }));
+  if (!typed) return false;
+
+  const clicked = await tryStep(() => page.click('button[type="submit"], input[type="submit"]', { timeout: 8000 }));
+  if (!clicked) await tryStep(() => page.keyboard.press('Enter'));
+
+  // Let the redirect chain finish. Ten seconds is what a real sign-in takes here.
+  await sleep(10000);
   return true;
 }
 
-async function ensureListLoaded(page) {
-  await page.goto(CONFIG.listUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
-  if (await safe$(page, '#readyToInvoice')) { await waitForRows(page); return true; }
+/*
+ * opts.autoLogin  — false when a HUMAN is signing in on purpose. Filling the
+ *   password form is worse than useless for a single-sign-on account: Fullbay
+ *   offers "Continue with Microsoft", the submitted form gets nowhere, and the
+ *   page is left spinning so the person cannot use the login screen either.
+ * opts.waitMinutes — how long to wait for that human.
+ */
+/*
+ * Kill any Chromium still holding OUR browser profile. Playwright will otherwise
+ * "open in existing browser session" and hand back a blank window that never
+ * navigates. Matching is on the exact --user-data-dir, so only browsers this app
+ * started are ever touched.
+ */
+async function releaseProfileLock(profileDir) {
+  if (process.platform !== 'win32') return;
+  const { execSync } = require('child_process');
+  try {
+    const esc = profileDir.replace(/\\/g, '\\\\').replace(/'/g, "''");
+    const ps = `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | `
+      + `Where-Object { $_.CommandLine -like '*--user-data-dir=${esc}*' } | `
+      + `ForEach-Object { $_.ProcessId }`;
+    const out = execSync(`powershell -NoProfile -Command "${ps.replace(/"/g, '\\"')}"`,
+      { encoding: 'utf8', timeout: 20000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const pids = out.split(/\r?\n/).map((s) => s.trim()).filter((s) => /^\d+$/.test(s));
+    if (!pids.length) return;
+    log(`  Clearing ${pids.length} leftover browser process(es) holding the sign-in profile…`);
+    pids.forEach((pid) => {
+      try { execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore', timeout: 10000 }); } catch (e) { /* already gone */ }
+    });
+    // Chromium also leaves a lockfile behind after a hard kill.
+    try { fs.rmSync(path.join(profileDir, 'lockfile'), { force: true }); } catch (e) { /* ignore */ }
+  } catch (e) {
+    // Best effort only — never block a run because cleanup failed.
+  }
+}
 
-  // Try automatic sign-in with stored credentials before asking for a human.
-  if (readFullbayCreds()) {
-    log('  Attempting automatic Fullbay sign-in…');
-    await autoLoginFullbay(page);
-    await page.goto(CONFIG.listUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
-    if (await safe$(page, '#readyToInvoice')) { log('  Signed in automatically.\n'); await waitForRows(page); return true; }
-    log('  Automatic sign-in did not complete — waiting for a manual sign-in.');
+/** Wait for the Ready-to-Invoice table to actually render. */
+async function waitForList(page, ms) {
+  try { await page.waitForSelector('#readyToInvoice', { timeout: ms }); return true; }
+  catch (e) { return false; }
+}
+
+async function ensureListLoaded(page, opts = {}) {
+  const autoLogin = opts.autoLogin !== false;
+  const waitMinutes = opts.waitMinutes || 5;
+
+  await page.goto(CONFIG.listUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
+  // Fullbay serves the LOGIN page at this same URL when the session is gone, so
+  // a password box means "signed out" — don't sit waiting for a table that is
+  // never going to appear. Only wait for the table when we look signed in.
+  if (!(await safe$(page, 'input[type="password"]'))
+      && await waitForList(page, 20000)) { await waitForRows(page); return true; }
+
+  // Try automatic sign-in with stored credentials before asking for a human,
+  // but never against a single-sign-on screen — see above.
+  if (autoLogin && readFullbayCreds()) {
+    const ssoOnly = await page.evaluate(() => {
+      const t = (document.body && document.body.innerText) || '';
+      const hasSso = /continue with microsoft|sign in with microsoft|use microsoft/i.test(t)
+        || !!document.querySelector('a[href*="microsoftonline"], a[href*="/sso"], button[data-provider="microsoft"]');
+      const hasPw = !!document.querySelector('input[type="password"]');
+      return hasSso && !hasPw;
+    }).catch(() => false);
+
+    if (ssoOnly) {
+      log('  Fullbay is asking for a Microsoft sign-in — that has to be done by hand.');
+    } else {
+      log('  Attempting automatic Fullbay sign-in…');
+      await autoLoginFullbay(page);
+      await page.goto(CONFIG.listUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
+      if (await waitForList(page, 30000)) { log('  Signed in automatically.\n'); await waitForRows(page); return true; }
+      log('  Automatic sign-in did not complete — waiting for a manual sign-in.');
+    }
   }
 
   log('\n  ──────────────────────────────────────────────');
   log('  Please log into Fullbay in the browser window.');
+  log('  Use "Continue with Microsoft" if that is how you normally sign in.');
   log('  I will continue automatically once the list loads.');
   log('  ──────────────────────────────────────────────\n');
 
-  const deadline = Date.now() + 5 * 60 * 1000; // wait up to 5 minutes for sign-in
+  const deadline = Date.now() + waitMinutes * 60 * 1000;
   while (Date.now() < deadline) {
-    if (await safe$(page, '#readyToInvoice')) {
+    // Waiting for the selector (rather than checking once and reloading) is what
+    // gives the AJAX table time to render. Reloading every couple of seconds
+    // restarts the load and the table never appears — the page just spins.
+    if (await waitForList(page, 8000)) {
       log('  Logged in — list found.\n');
       await waitForRows(page);
       return true;
     }
-    // Are we still on a login screen? If so, DO NOT touch the page — let the
-    // user type. Reloading here would wipe their half-typed credentials.
+    // Still on a login screen? DO NOT touch the page — let the person type.
+    // Otherwise RELOAD: after a sign-in completes, re-requesting the list URL is
+    // what actually picks up the new session. (Checking the URL is useless here —
+    // Fullbay serves the login page at the list URL too.)
     const onLogin = await safe$(page, 'input[type="password"]');
     if (!onLogin) {
-      // Logged in (or past the login form) but not on the list yet — go there once.
       await page.goto(CONFIG.listUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
     }
-    await sleep(2500);
+    await sleep(1500);
   }
   throw new Error('Timed out waiting for login / the Ready-to-Invoice list.');
 }
@@ -419,8 +509,18 @@ async function runProbe(page, context) {
  * -------------------------------------------------------------------------- */
 async function runFull(page, context) {
   const t0 = Date.now();
+  // Timing on every startup phase. Without it, a slow run is indistinguishable
+  // from a stuck one — you just watch a browser sit there.
+  const phase = (label, since) => log(`  [${((Date.now() - t0) / 1000).toFixed(1)}s] ${label} took ${((Date.now() - since) / 1000).toFixed(1)}s`);
+
+  let mark = Date.now();
   await ensureListLoaded(page);
+  phase('sign-in / list', mark);
+
+  mark = Date.now();
   const rows = await readListRows(page);
+  phase(`reading the list (${rows.length} orders)`, mark);
+
   let limit = rows.length;
   if (CONFIG.maxOrders && CONFIG.maxOrders > 0) limit = Math.min(limit, CONFIG.maxOrders);
 
@@ -430,7 +530,9 @@ async function runFull(page, context) {
   // otherwise from a local .xlsx export (which may be stale).
   let sheet = null;
   if (CONFIG.checkSheetCompletion !== false) {
+    mark = Date.now();
     sheet = await loadSheetCompletionMap();
+    phase('loading the sheet trackers', mark);
     if (sheet) {
       const src = sheet.live ? 'LIVE Google Sheets' : 'local .xlsx export (may be stale)';
       log(`Sheet tracker [${src}]: ${sheet.map.size} units from ${sheet.tabsUsed.length} tab(s) across ${sheet.files.length} source(s): ${sheet.files.join(', ')}.`);
@@ -444,8 +546,7 @@ async function runFull(page, context) {
 
   const results = [];
   const allPhotos = []; // {soNumber, aiNumber, technician, url, hash, localFile}
-  const billed = {};    // techName -> { total, weeks: { 'YYYY-MM-DD': hours } }
-  const photosDir = path.join(__dirname, 'photos');
+  const photosDir = dataPath('photos');
   if (doPhotos) {
     fs.rmSync(photosDir, { recursive: true, force: true }); // fresh each run
     fs.mkdirSync(photosDir, { recursive: true });
@@ -481,7 +582,7 @@ async function runFull(page, context) {
           });
         }
 
-        const findings = runAudit(so);
+        const findings = runAudit(so, { inspectionSoPhotoMin: CONFIG.inspectionSoPhotoMin });
         const technicians = [...new Set(so.actionItems.map((a) => a.technician).filter(Boolean))];
 
         // Service-call identifier: real "Service Call (In/Out Hours)", NOT "Drive to unit (Service Call)".
@@ -509,17 +610,8 @@ async function runFull(page, context) {
           }
         }
 
-        // Accumulate billed (invoiced) hours per mechanic, bucketed by Mon–Sun week.
-        const wk = mondayISO(r.completedDate ? new Date(r.completedDate * 1000) : new Date());
-        for (const ai of so.actionItems) {
-          const tn = ai.technician; const hrs = ai.invoicedHours || 0;
-          if (!tn || hrs <= 0) continue;
-          const b = (billed[tn] = billed[tn] || { total: 0, weeks: {} });
-          b.total += hrs; b.weeks[wk] = (b.weeks[wk] || 0) + hrs;
-        }
-
         results.push({
-          soNumber: so.soNumber, url: page.url(),
+          soNumber: so.soNumber, url: page.url(), repairOrderId: r.repairOrderId,
           customerName: so.customerName || r.customer, unitNumber: unitNum,
           serviceWriter: r.serviceWriter || '', technicians, poNumber: r.poNumber,
           sheetComplete, sheetStatus, notes, serviceCall,
@@ -626,6 +718,11 @@ async function runFull(page, context) {
         for (const r of checkable) {
           const info = v.results[vorto.orderKey(unitOf(r), mtOf(r))];
           r.vorto = info || null;
+          // Flat aliases for the FLSS portal, which reads `vortoResolved` /
+          // `vortoStatus` if they are present. Without these, check H shows up in
+          // the portal as findings with no supporting portal state.
+          r.vortoResolved = info ? !!info.resolved : null;
+          r.vortoStatus = info ? (info.status || info.where || '') : '';
           if (info && !info.resolved) {
             flagged++;
             const isOpen = info.where === 'open';
@@ -643,8 +740,30 @@ async function runFull(page, context) {
     }
   }
 
+  // --- Open service orders: the second section of the audit ---
+  let openOrders = [];
+  if (CONFIG.auditOpenSos !== false) {
+    const mk = Date.now();
+    try {
+      openOrders = await auditOpenSos(page);
+      fs.writeFileSync(dataPath('open-sos.json'),
+        JSON.stringify({ generatedAt: new Date().toISOString(), orders: openOrders }, null, 2), 'utf8');
+    } catch (e) {
+      log('Open SOs: section failed — ' + e.message);
+    }
+    phase('auditing open orders', mk);
+  }
+
+  // Record this run for the week-by-week scorecard. Never let a scorecard
+  // problem cost us the report, so it is best-effort and comes first only in the
+  // sense that it reads `results` before the writers touch anything.
+  try {
+    if (require('./scorecard').recordRun(results)) log('Scorecard: run recorded.');
+  } catch (e) { log('Scorecard: could not record this run — ' + e.message); }
+
   writeCsv(results);
-  writeHtml(results, dupInfo);
+  writeJson(results, dupInfo, allPhotos);
+  writeHtml(results, dupInfo, openOrders);
   const totalFindings = results.reduce((n, r) => n + r.findings.length, 0);
   const flaggedOrders = results.filter((r) => r.findings.length).length;
 
@@ -652,18 +771,6 @@ async function runFull(page, context) {
   const byCheck = {};
   results.forEach((r) => r.findings.forEach((f) => { byCheck[f.check] = (byCheck[f.check] || 0) + 1; }));
   const minsPerOrder = CONFIG.manualMinutesPerOrder || 8;
-
-  // --- Billed-hours scorecard (per mechanic, by Mon–Sun week) ---
-  const billedWeeks = new Set();
-  Object.values(billed).forEach((b) => Object.keys(b.weeks).forEach((w) => billedWeeks.add(w)));
-  const billedSummary = {
-    weeks: [...billedWeeks].sort().reverse(),
-    byTech: Object.entries(billed).map(([name, b]) => ({
-      name,
-      total: Math.round(b.total * 100) / 100,
-      weekHours: Object.fromEntries(Object.entries(b.weeks).map(([w, h]) => [w, Math.round(h * 100) / 100])),
-    })).sort((a, b) => b.total - a.total),
-  };
 
   const summary = {
     timestamp: new Date().toISOString(),
@@ -678,9 +785,8 @@ async function runFull(page, context) {
     estMinutesSaved: results.length * minsPerOrder,
     manualMinutesPerOrder: minsPerOrder,
     runSeconds: Math.round((Date.now() - t0) / 1000),
-    billed: billedSummary,
   };
-  fs.writeFileSync(path.join(__dirname, 'audit-summary.json'), JSON.stringify(summary, null, 2), 'utf8');
+  fs.writeFileSync(dataPath('audit-summary.json'), JSON.stringify(summary, null, 2), 'utf8');
 
   log(`\nDone. ${flaggedOrders} of ${results.length} orders have issues (${totalFindings} findings total).`);
   log('Reports written: audit-report.html  and  audit-results.csv');
@@ -743,7 +849,7 @@ async function runPhotoProbe(page, context) {
     await sleep(CONFIG.slowDownMs);
   }
 
-  fs.writeFileSync(path.join(__dirname, 'photo-investigation.json'), JSON.stringify(dump, null, 2), 'utf8');
+  fs.writeFileSync(dataPath('photo-investigation.json'), JSON.stringify(dump, null, 2), 'utf8');
   log('\nFull detail written to photo-investigation.json');
   log('Browser stays open 20s.');
   await sleep(20000);
@@ -810,7 +916,7 @@ async function runViewerProbe(page, context) {
   });
 
   const dump = { soNumber: target.soNumber, ...domDump, networkImages: netImages.slice(0, 80) };
-  fs.writeFileSync(path.join(__dirname, 'viewer-investigation.json'), JSON.stringify(dump, null, 2), 'utf8');
+  fs.writeFileSync(dataPath('viewer-investigation.json'), JSON.stringify(dump, null, 2), 'utf8');
   log(`Captured ${dump.networkImages.length} image responses, ${dump.domImages.length} photo <img> in DOM.`);
   log('Detail in viewer-investigation.json. Browser stays open 30s so you can open a photo to compare.');
   await sleep(30000);
@@ -873,8 +979,8 @@ async function runAiHtmlProbe(page, context) {
     return { html: html.slice(0, 8000), photoImgs: imgs.slice(0, 30) };
   }, found.countId);
 
-  fs.writeFileSync(path.join(__dirname, 'ai-html-dump.html'), dump.html, 'utf8');
-  fs.writeFileSync(path.join(__dirname, 'ai-network-dump.json'),
+  fs.writeFileSync(dataPath('ai-html-dump.html'), dump.html, 'utf8');
+  fs.writeFileSync(dataPath('ai-network-dump.json'),
     JSON.stringify({ soNumber: found.r.soNumber, photoImgs: dump.photoImgs, networkCalls: netCalls.slice(0, 60) }, null, 2), 'utf8');
   log(`Wrote ai-html-dump.html and ai-network-dump.json. Photo <img> found: ${dump.photoImgs.length}, network calls: ${netCalls.length}.`);
   log('Browser stays open 30s.');
@@ -912,14 +1018,14 @@ async function runImgApiProbe(page, context) {
     `&tableName=RepairOrderActionItem&primaryKeyId=${aiId}&imageLimit=50&ajax=1`;
   const resp = await context.request.get(url);
   const body = await resp.text();
-  fs.writeFileSync(path.join(__dirname, 'img-api-dump.html'), body, 'utf8');
+  fs.writeFileSync(dataPath('img-api-dump.html'), body, 'utf8');
 
   // Pull out any image-ish URLs from the returned HTML.
   const urls = [...body.matchAll(/(?:src|href|data-[\w-]*)\s*=\s*["']([^"']+)["']/gi)]
     .map((m) => m[1])
     .filter((u) => /amazonaws|attachment|getImage|downloadImage|\.jpe?g|\.png|\.webp|\.pdf|\.gif/i.test(u) &&
       !/loading|icon|logo|placeholder/i.test(u));
-  fs.writeFileSync(path.join(__dirname, 'img-api-urls.json'),
+  fs.writeFileSync(dataPath('img-api-urls.json'),
     JSON.stringify({ soNumber: soNum, actionItemId: aiId, status: resp.status(), bodyLength: body.length, urls: [...new Set(urls)].slice(0, 40) }, null, 2), 'utf8');
   log(`Endpoint status ${resp.status()}, body ${body.length} bytes. Found ${[...new Set(urls)].length} image-ish URLs.`);
   log('See img-api-dump.html and img-api-urls.json.');
@@ -950,11 +1056,11 @@ const normUnit = (s) => String(s == null ? '' : s).trim().toUpperCase();
 
 // Newest .xlsx in the project folder (the user's exported tracker).
 function findNewestXlsx() {
-  const files = fs.readdirSync(__dirname)
+  const files = fs.readdirSync(DATA_DIR)
     .filter((f) => /\.xlsx$/i.test(f) && !f.startsWith('~$'))
-    .map((f) => ({ f, m: fs.statSync(path.join(__dirname, f)).mtimeMs }))
+    .map((f) => ({ f, m: fs.statSync(dataPath(f)).mtimeMs }))
     .sort((a, b) => b.m - a.m);
-  return files.length ? path.join(__dirname, files[0].f) : null;
+  return files.length ? dataPath(files[0].f) : null;
 }
 
 // What a unit id looks like (ALMZ8277DV, ALMZ1177FB, OLMZ011442, ...).
@@ -1058,17 +1164,48 @@ async function loadSheetCompletionMap() {
   const year = CONFIG.sheetYear || String(new Date().getFullYear()); // auto-advances each year
   const filterFn = currentYearTabFilter(year);
 
-  // --- Preferred: live Google Sheets via the Sheets API key ---
-  const urls = sheetUrls();
+  // --- Preferred: live Google Sheets ---
+  // Start from the configured links, then (if enabled) add every spreadsheet
+  // shared with the service account. Auto-discovery is what makes a NEW market's
+  // tracker start counting without anyone editing settings — share it with
+  // gsheets.serviceAccountEmail() and it is picked up on the next run.
+  let urls = sheetUrls();
+  if (CONFIG.autoDiscoverSheets !== false && gsheets.serviceAccount()) {
+    try {
+      const found = await gsheets.listSpreadsheets();
+      const seen = new Set(urls.map((u) => gsheets.idFromUrl(u)));
+      let added = 0;
+      for (const f of found) {
+        if (seen.has(f.id)) continue;
+        seen.add(f.id);
+        urls.push('https://docs.google.com/spreadsheets/d/' + f.id + '/edit');
+        added++;
+      }
+      log(`Sheet tracker: auto-discovery found ${found.length} shared spreadsheet(s); added ${added} beyond the configured links.`);
+    } catch (e) {
+      log(`Sheet tracker: auto-discovery unavailable (${e.message}). Using the configured sheet links only.`);
+    }
+  }
   if (gsheets.isConfigured() && urls.length) {
     try {
+      // Read the trackers CONCURRENTLY. Sequentially this grew with every sheet
+      // added, and it happens before the first order opens — so it reads as the
+      // app "sitting on the Office page doing nothing".
+      const settled = await Promise.all(urls.map(async (url) => {
+        try { return { ok: true, sheet: await gsheets.readSpreadsheet(url, filterFn) }; }
+        catch (e) {
+          // One unreadable spreadsheet (permissions, deleted, not a tracker)
+          // must not sink the whole completion check.
+          return { ok: false, url, err: e.message };
+        }
+      }));
       const tabs = [];
       const titles = [];
-      for (const url of urls) {
-        const sheet = await gsheets.readSpreadsheet(url, filterFn);
-        titles.push(sheet.title);
-        for (const t of sheet.tabs) tabs.push(t);
-      }
+      settled.forEach((r) => {
+        if (!r.ok) { log(`Sheet tracker: skipped ${r.url} — ${r.err}`); return; }
+        titles.push(r.sheet.title);
+        for (const t of r.sheet.tabs) tabs.push(t);
+      });
       const { map, tabsUsed } = buildMapFromTabs(tabs);
       return { map, files: titles, year, tabsUsed, live: true };
     } catch (e) {
@@ -1079,12 +1216,12 @@ async function loadSheetCompletionMap() {
   // --- Fallback: local .xlsx export(s) ---
   let files;
   if (CONFIG.sheetFile) {
-    const p = path.join(__dirname, CONFIG.sheetFile);
+    const p = dataPath(CONFIG.sheetFile);
     files = fs.existsSync(p) ? [p] : [];
   } else {
-    files = fs.readdirSync(__dirname)
+    files = fs.readdirSync(DATA_DIR)
       .filter((f) => /\.xlsx$/i.test(f) && !f.startsWith('~$'))
-      .map((f) => path.join(__dirname, f));
+      .map((f) => dataPath(f));
   }
   if (!files.length) return null;
 
@@ -1147,8 +1284,8 @@ async function runSheetProbe(page, context) {
   const tabs = await page.$$eval('.docs-sheet-tab-name', (els) => els.map((e) => e.textContent.trim())).catch(() => []);
 
   const rows = csv.split(/\r?\n/).slice(0, 15);
-  fs.writeFileSync(path.join(__dirname, 'sheet-sample.csv'), csv.split(/\r?\n/).slice(0, 25).join('\n'), 'utf8');
-  fs.writeFileSync(path.join(__dirname, 'sheet-tabs.json'), JSON.stringify({ sheetId, currentGid: gid, tabs }, null, 2), 'utf8');
+  fs.writeFileSync(dataPath('sheet-sample.csv'), csv.split(/\r?\n/).slice(0, 25).join('\n'), 'utf8');
+  fs.writeFileSync(dataPath('sheet-tabs.json'), JSON.stringify({ sheetId, currentGid: gid, tabs }, null, 2), 'utf8');
   log(`Tabs found (${tabs.length}): ${tabs.join(' | ')}`);
   log(`\nFirst rows of the current tab (gid ${gid}):`);
   rows.forEach((r, i) => log(`  ${i}: ${r.slice(0, 200)}`));
@@ -1221,7 +1358,7 @@ async function runNotesProbe(page, context) {
     return out;
   }, found.aiId);
 
-  fs.writeFileSync(path.join(__dirname, 'notes-network.json'), JSON.stringify({ ...found, hadFn, reqs, calls, dom }, null, 2), 'utf8');
+  fs.writeFileSync(dataPath('notes-network.json'), JSON.stringify({ ...found, hadFn, reqs, calls, dom }, null, 2), 'utf8');
   log(`Captured ${reqs.length} POST(s) to handleRepairOrderActionItem.html:`);
   reqs.forEach((r) => log('  POST body: ' + r.postData));
   log('See notes-network.json. Browser stays open 10s.');
@@ -1258,14 +1395,89 @@ function writeCsv(results) {
     }
   });
   // Prepend a UTF-8 BOM so Excel renders dashes/accents correctly.
-  fs.writeFileSync(path.join(__dirname, 'audit-results.csv'), '﻿' + lines.join('\r\n'), 'utf8');
+  fs.writeFileSync(dataPath('audit-results.csv'), '﻿' + lines.join('\r\n'), 'utf8');
 }
 
 const CHECK_NAMES = {
   A: 'Photos', B: 'Parts', C: 'Inspections', D: 'Hours', E: 'PO', F: 'Dup photo', G: 'Sheet',
+  H: 'Vorto',
+  // No entry for address fixes on purpose — they are housekeeping, not findings,
+  // so they never appear as a check against an order.
 };
 
-function writeHtml(results, dupInfo = {}) {
+/*
+ * writeJson — the full run as structured data. audit-report.html is for people;
+ * this is the same information for another application (a hosted dashboard
+ * rendering its own UI), so nothing has to parse our HTML.
+ */
+function writeJson(results, dupInfo = {}, allPhotos = []) {
+  const out = {
+    schema: 1,
+    generatedAt: new Date().toISOString(),
+    checkNames: CHECK_NAMES,
+    counts: {
+      orders: results.length,
+      flaggedOrders: results.filter((r) => r.findings.length).length,
+      findings: results.reduce((n, r) => n + r.findings.length, 0),
+      blockers: results.reduce((n, r) => n + r.findings.filter((f) => f.severity === 'blocker').length, 0),
+      duplicatePhotoGroups: Object.keys(dupInfo).length,
+    },
+    orders: results.map((r) => ({
+      soNumber: r.soNumber,
+      url: r.url,
+      customerName: r.customerName || null,
+      unitNumber: r.unitNumber || null,
+      serviceWriter: r.serviceWriter || null,
+      technicians: r.technicians || [],
+      poNumber: r.poNumber || null,
+      actionItemCount: r.actionItemCount ?? null,
+      serviceCall: !!r.serviceCall,
+      sheetComplete: r.sheetComplete ?? null,
+      sheetStatus: r.sheetStatus || null,
+      vorto: r.vorto || null,
+      // What the address pass did. Deliberately NOT a finding — housekeeping.
+      addressFix: r.addressFix || null,
+      error: r.error || null,
+      findings: (r.findings || []).map((f) => ({
+        check: f.check,
+        checkName: CHECK_NAMES[f.check] || null,
+        severity: f.severity,
+        title: f.title,
+        detail: f.detail,
+        technician: f.technician || null,
+      })),
+      // "reusedOn" mirrors the report's REUSED badge: other orders carrying this
+      // exact photo. Derived from the hash map, same as writeHtml does.
+      photos: (r.photos || []).map((p) => {
+        const others = (dupInfo[p.hash] || []).filter((so) => so !== r.soNumber);
+        return {
+          file: p.localFile,
+          aiNumber: p.aiNumber,
+          technician: p.technician || null,
+          reusedOn: others,
+          duplicate: others.length > 0,
+        };
+      }),
+    })),
+  };
+
+  /*
+   * The FLSS portal agent reads `results` / `photos` / `dupInfo` — the raw
+   * scrape — while everything else here reads the tidied `orders` view above.
+   * Both live in this one file as a SUPERSET rather than two writers fighting
+   * over the same filename, which is what an earlier patch attempt would have
+   * done (its write ran last and silently replaced the structured output).
+   */
+  out.results = results;
+  out.photos = allPhotos;
+  out.dupInfo = dupInfo;
+
+  fs.writeFileSync(dataPath('audit-results.json'), JSON.stringify(out, null, 2), 'utf8');
+}
+
+const ageInDaysSafe = (t) => { try { return require('./checks').ageInDays(t) || 0; } catch (e) { return 0; } };
+
+function writeHtml(results, dupInfo = {}, openOrders = []) {
   const flagged = results.filter((r) => r.findings.length);
   const totalFindings = results.reduce((n, r) => n + r.findings.length, 0);
 
@@ -1298,6 +1510,27 @@ function writeHtml(results, dupInfo = {}) {
     return `<details class="notes"><summary>📝 Notes (${notes.length})</summary>${items}</details>`;
   };
 
+  // Anchor id for one order, so the digest lists can jump straight to its card.
+  const anchorFor = (r) => 'so-' + String(r.soNumber || '').replace(/[^A-Za-z0-9]+/g, '-');
+
+  /*
+   * Two plain lists at the top: what can be invoiced, and what still needs a
+   * look. Just the SO numbers, so neither has to be hunted for by scrolling the
+   * cards. Each is a link to its card further down.
+   */
+  // Plain, selectable numbers — no links. Clicking copies the bare number so it
+  // can go straight into Fullbay's search box; selecting it by hand copies the
+  // same thing, because that IS the text.
+  const soList = (list) => (list.length
+    ? list.map((r) => {
+      const n = String(r.soNumber || '').replace(/^SO-?/i, '');
+      return `<span class="so-num" data-n="${esc(n)}" title="Click to copy">${esc(n)}</span>`;
+    }).join('')
+    : '<span class="none">None</span>');
+
+  const readyList = results.filter((r) => !r.error && !r.findings.length);
+  const reviewList = results.filter((r) => r.error || r.findings.length);
+
   const cards = results.map((r) => {
     const sev = r.findings.some((f) => f.severity === 'blocker') ? 'blocker'
       : r.findings.length ? 'warning' : (r.error ? 'error' : 'ok');
@@ -1316,15 +1549,60 @@ function writeHtml(results, dupInfo = {}) {
         ? '<span class="sheet yes">Sheet: Yes</span>'
         : `<span class="sheet no">Sheet: No${r.sheetStatus && r.sheetStatus !== 'Not found' ? ' (' + esc(r.sheetStatus) + ')' : ' (not found)'}</span>`;
     }
+    // Vorto badge, mirroring the Sheet badge. Three states, because "not in the
+    // portal at all" is a different problem from "there but still open".
+    let vortoBadge = '';
+    if (r.vorto) {
+      if (r.vorto.resolved) {
+        vortoBadge = '<span class="sheet yes">Vorto: Yes</span>';
+      } else if (r.vorto.where === 'missing') {
+        vortoBadge = '<span class="sheet warn">Vorto: Not found</span>';
+      } else {
+        vortoBadge = `<span class="sheet no">Vorto: No${r.vorto.status ? ' (' + esc(r.vorto.status) + ')' : ''}</span>`;
+      }
+    }
     const scBadge = r.serviceCall ? '<span class="sc-badge">🛎 Service Call</span>' : '';
-    return `<div class="so ${sev}">
+    return `<div class="so ${sev}" id="${anchorFor(r)}">
       <div class="so-head"><strong>${esc(r.soNumber)}</strong>${scBadge}
         <span class="meta">${esc(r.customerName || '')} ${r.unitNumber ? '· Unit ' + esc(r.unitNumber) : ''}
           ${techList ? '· Tech: ' + esc(techList) : ''}${r.serviceWriter ? ' · Writer: ' + esc(r.serviceWriter) : ''}</span>
-        ${sheetBadge}
+        ${sheetBadge}${vortoBadge}
         <a href="${esc(r.url)}" target="_blank">open</a></div>
       ${findingHtml}${notesHtml(r)}${galleryHtml(r)}</div>`;
   }).join('');
+
+  /*
+   * Open service orders — a separate section, because these are not billing
+   * decisions. The question here is what is holding each order up.
+   */
+  const OPEN_NAMES = {
+    O1: 'Open too long', O2: 'Still in progress', O3: 'Not started',
+    O4: 'Awaiting parts quote', O5: 'No parts on repair',
+    O6: 'No photos', O7: 'Missing before/after',
+  };
+  const openSection = !openOrders.length ? '' : `
+  <div class="wrap">
+    <h2 class="oh">Open service orders <span>${openOrders.length}</span></h2>
+    <p class="osub">Still being worked. Sorted oldest first — age is how long the order has been open.</p>
+    ${openOrders.slice().sort((a, b) => (ageInDaysSafe(b.ageText) - ageInDaysSafe(a.ageText))).map((o) => {
+    const worst = o.findings.some((f) => f.severity === 'blocker') ? 'blocker'
+      : (o.findings.length ? 'warning' : 'ok');
+    const items = o.findings.length
+      ? o.findings.map((f) => `<div class="f ${f.severity}">
+          <span class="tag">${f.check} · ${OPEN_NAMES[f.check] || ''}</span>
+          <strong>${esc(f.title)}</strong>${f.technician ? ' <span class="tech">' + esc(f.technician) + '</span>' : ''}
+          <div class="det">${esc(f.detail)}</div></div>`).join('')
+      : '<div class="f ok">Nothing outstanding.</div>';
+    return `<div class="so ${worst}">
+        <div class="so-head"><strong>${esc(o.soNumber)}</strong>
+          <span class="age">${esc(o.ageText || '')}</span>
+          <span class="meta">${esc(o.customer || '')} ${o.unit ? '· Unit ' + esc(o.unit) : ''}
+            ${o.assignedTech ? '· Tech: ' + esc(o.assignedTech) : ''}</span>
+          <span class="sheet ${/done/i.test(o.partsStatus || '') ? 'yes' : 'warn'}">Parts: ${esc(o.partsStatus || 'not set')}</span>
+          <span class="sheet warn">${esc(o.serviceStatus || '')}</span>
+        </div>${items}</div>`;
+  }).join('')}
+  </div>`;
 
   const blockers = results.reduce((n, r) => n + r.findings.filter((f) => f.severity === 'blocker').length, 0);
   const warnings = totalFindings - blockers;
@@ -1363,6 +1641,11 @@ function writeHtml(results, dupInfo = {}) {
   .sc-badge{font-size:11px;font-weight:800;border-radius:20px;padding:4px 11px;background:#dbeafe;color:#1e40af;white-space:nowrap}
   .sheet{font-size:11px;font-weight:700;border-radius:20px;padding:4px 11px;white-space:nowrap}
   .sheet.yes{background:#dcfce7;color:#15803d}.sheet.no{background:#fee2e2;color:#b91c1c}
+  .sheet.warn{background:#fef3c7;color:#a16207}
+  .oh{font-size:19px;font-weight:800;color:#0b2341;margin:34px 0 4px;display:flex;align-items:center;gap:10px}
+  .oh span{font-size:15px;color:#a16207;background:#fef3c7;border-radius:20px;padding:3px 12px}
+  .osub{font-size:12.5px;color:#7b8aa3;margin:0 0 14px}
+  .age{font-size:11px;font-weight:700;background:#eef3fa;color:#15356b;border-radius:20px;padding:4px 11px;white-space:nowrap}
   .f{font-size:13px;padding:9px 0;border-top:1px solid #f0f3f8;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
   .f:first-of-type{border-top:none}
   .f .tag{font-size:10.5px;font-weight:800;border-radius:20px;padding:3px 10px;letter-spacing:.03em;text-transform:uppercase;background:#eef2f7;color:#334155}
@@ -1391,6 +1674,26 @@ function writeHtml(results, dupInfo = {}) {
   .dupbadge{position:absolute;bottom:0;left:0;right:0;background:var(--red);color:#fff;font-size:9px;font-weight:800;text-align:center;padding:2px 0;letter-spacing:.04em}
   #lbov{display:none;position:fixed;inset:0;background:rgba(7,24,44,.88);z-index:999;align-items:center;justify-content:center;cursor:zoom-out}
   #lbov img{max-width:92vw;max-height:92vh;border-radius:8px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  /* Two plain lists so the actionable SOs are readable at a glance. */
+  .lists{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px}
+  .list{background:#fff;border:1px solid #e3e9f2;border-radius:12px;padding:14px 18px 16px}
+  .list h2{margin:0 0 10px;font-size:14px;font-weight:800;color:#0b2341;display:flex;align-items:center;gap:8px}
+  .list h2 span{margin-left:auto;font-variant-numeric:tabular-nums}
+  .list.ready h2::before{content:'';width:9px;height:9px;border-radius:50%;background:#16a34a}
+  .list.review h2::before{content:'';width:9px;height:9px;border-radius:50%;background:#dc2626}
+  .list.ready h2 span{color:#16a34a}
+  .list.review h2 span{color:#dc2626}
+  .sos{display:flex;flex-direction:column}
+  .so-num{font-size:13.5px;font-weight:600;color:#0b2341;padding:6px 2px;border-bottom:1px solid #f0f3f8;
+    cursor:pointer;font-variant-numeric:tabular-nums;letter-spacing:.02em;position:relative;
+    -webkit-user-select:all;user-select:all}
+  .so-num:last-child{border-bottom:0}
+  .so-num:hover{color:#dc2626}
+  .so-num.copied::after{content:'copied';position:absolute;right:2px;font-size:10.5px;font-weight:700;
+    color:#16a34a;letter-spacing:.04em;user-select:none}
+  .sos .none{font-size:12.5px;color:#7b8aa3;padding:5px 0}
+  .so{scroll-margin-top:18px}
+  @media(max-width:680px){.lists{grid-template-columns:1fr}}
   @media(max-width:680px){.tiles{grid-template-columns:repeat(2,1fr)}}
 </style></head><body>
   <div class="banner"><div class="wrap"><h1>Ready-to-Invoice Audit</h1>
@@ -1402,466 +1705,1033 @@ function writeHtml(results, dupInfo = {}) {
     ${tile(warnings, 'Warnings', 'amber')}
     ${tile(clean, 'Clean', 'green')}
   </div>
+  <div class="wrap lists">
+    <div class="list ready"><h2>Ready to invoice <span>${readyList.length}</span></h2>
+      <div class="sos">${soList(readyList)}</div></div>
+    <div class="list review"><h2>Needs review <span>${reviewList.length}</span></h2>
+      <div class="sos">${soList(reviewList)}</div></div>
+  </div>
   <div class="wrap">
   ${cards}
   </div>
+  ${openSection}
   <div id="lbov" onclick="this.style.display='none'"><img id="lbimg" src=""></div>
   <script>
     function lb(src){ var o=document.getElementById('lbov'); document.getElementById('lbimg').src=src; o.style.display='flex'; }
+    // Copy just the number. execCommand is kept as the fallback because the
+    // clipboard API is often blocked when this report is shown in an iframe.
+    function copySo(el){
+      var n = el.getAttribute('data-n') || '';
+      var done = function(){ el.classList.add('copied'); setTimeout(function(){ el.classList.remove('copied'); }, 1200); };
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(n).then(done, function(){ fallback(n, done); });
+          return;
+        }
+      } catch (e) { /* fall through */ }
+      fallback(n, done);
+    }
+    function fallback(n, done){
+      var ta = document.createElement('textarea');
+      ta.value = n; ta.setAttribute('readonly',''); ta.style.position='fixed'; ta.style.top='-1000px';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) { /* nothing else to try */ }
+      document.body.removeChild(ta);
+    }
+    document.addEventListener('click', function(e){
+      var el = e.target.closest ? e.target.closest('.so-num') : null;
+      if (el) copySo(el);
+    });
     document.addEventListener('keydown',function(e){ if(e.key==='Escape') document.getElementById('lbov').style.display='none'; });
   </script>
 </body></html>`;
-  fs.writeFileSync(path.join(__dirname, 'audit-report.html'), html, 'utf8');
+  fs.writeFileSync(dataPath('audit-report.html'), html, 'utf8');
 }
 
-/* ----------------------------------------------------------------------------
- * Reporting explorer (MODE=reports). Once signed in, maps Fullbay's Reporting
- * section so we can find the Invoiced Hours Report (per-tech completed/invoiced
- * hours by date) to power the efficiency scorecard. Writes a dump file to read.
- * -------------------------------------------------------------------------- */
-async function runReportsProbe(page, context) {
-  if (!(await ensureListLoaded(page))) { log('Not signed into Fullbay — aborting.'); return; }
-  log('Signed in. Exploring Fullbay Reporting…');
 
-  const grabAllLinks = () => page.evaluate(() => {
-    const seen = new Set(); const out = [];
-    document.querySelectorAll('a[href]').forEach((a) => {
-      const text = (a.textContent || '').replace(/\s+/g, ' ').trim();
-      const href = a.getAttribute('href') || '';
-      if (!href || href.indexOf('javascript:') === 0 || href === '#') return;
-      const key = text + '|' + href;
-      if (!seen.has(key)) { seen.add(key); out.push({ text, href }); }
+/* ----------------------------------------------------------------------------
+ * ESTIMATE MODE (READ-ONLY) — node audit.js estimate [repairOrderId]
+ *
+ * Opens a service order, clicks the "Estimate" box at the top, and dumps the
+ * Bill To / Ship To section plus the tax-location control. Runs through
+ * ensureListLoaded() so it inherits the working auto-login.
+ *
+ * Reads only: no fills, no selectOption, no submits. It must never modify a
+ * record, never touch the 5F labor rate, and never create a vendor address.
+ * -------------------------------------------------------------------------- */
+async function runEstimateProbe(page, context) {
+  const out = [];
+  const say = (s = '') => { log(s); out.push(s); };
+  const finish = () => fs.writeFileSync(dataPath('estimate-dump.txt'), out.join('\n'), 'utf8');
+
+  if (!(await ensureListLoaded(page))) { say('Not signed into Fullbay — aborting.'); finish(); return; }
+  say('Signed in.');
+
+  let id = (process.argv[3] || '').trim();
+  // Accept "SO-11602", "11602", or a raw repairOrderId. Repair-order ids are long
+  // (8 digits); SO numbers are short, so look those up in the Ready-to-Invoice list.
+  const looksLikeSo = /^so-?\d+$/i.test(id) || /^\d{1,6}$/.test(id);
+  if (!id || looksLikeSo) {
+    await showAllRows(page);
+    const rows = await readListRows(page);
+    if (!id) {
+      const first = rows.find((r) => r.repairOrderId);
+      if (!first) { say('No repair-order-id available from the list.'); finish(); return; }
+      id = first.repairOrderId;
+      say(`Using the first Ready-to-Invoice order: ${first.soNumber} (id ${id})`);
+    } else {
+      const want = id.replace(/^so-?/i, '');
+      const hit = rows.find((r) => String(r.soNumber || '').replace(/^so-?/i, '') === want && r.repairOrderId);
+      if (!hit) {
+        say(`SO ${id} was not found in the Ready-to-Invoice list (${rows.length} rows).`);
+        say('Rows available: ' + rows.slice(0, 40).map((r) => r.soNumber).join(', '));
+        finish(); return;
+      }
+      id = hit.repairOrderId;
+      say(`SO ${hit.soNumber} -> repairOrderId ${id}`);
+    }
+  }
+
+  await openOrderById(page, id);
+  await sleep(3000);
+  say('SO url: ' + page.url());
+
+  // The boxes across the top: Action Items | Parts List | Estimate | Edit
+  const boxes = await page.evaluate(() => {
+    const ZW = /[​-‍﻿­]/g;
+    const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+    return Array.from(document.querySelectorAll('a,button,li,div'))
+      .filter((el) => { const r = el.getBoundingClientRect(); return r.top < 500 && r.height > 16 && r.height < 160 && r.width > 50; })
+      .map((el) => ({ t: clean(el.textContent).slice(0, 40), tag: el.tagName.toLowerCase(),
+        href: el.getAttribute('href') || '', modal: el.getAttribute('data-modal') || '',
+        onclick: (el.getAttribute('onclick') || '').slice(0, 140),
+        left: Math.round(el.getBoundingClientRect().left) }))
+      .filter((b) => /^(action items?|parts list|estimate|edit)$/i.test(b.t))
+      .sort((a, b) => a.left - b.left);
+  });
+  say('');
+  say('=== TOP BOXES ===');
+  if (!boxes.length) say('  (none matched Action Items / Parts List / Estimate / Edit)');
+  boxes.forEach((b) => say(`  [x=${b.left}] "${b.t}" <${b.tag}> href=${b.href} modal=${b.modal} onclick=${b.onclick}`));
+
+  const clicked = await page.evaluate(() => {
+    const ZW = /[​-‍﻿­]/g;
+    const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+    const el = Array.from(document.querySelectorAll('a,button,li,div'))
+      .filter((e) => { const r = e.getBoundingClientRect(); return r.top < 500 && r.height > 16 && r.height < 160; })
+      .find((e) => /^estimate$/i.test(clean(e.textContent)));
+    if (!el) return false;
+    el.click();
+    return true;
+  });
+  say('clicked the Estimate box: ' + clicked);
+  await sleep(5000);
+  say('url now: ' + page.url());
+  await page.screenshot({ path: dataPath('estimate-view.png'), clip: { x: 0, y: 0, width: 1600, height: 1000 } }).catch(() => {});
+
+  const res = await page.evaluate(() => {
+    const ZW = /[​-‍﻿­]/g;
+    const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+    const RE = /bill\s*to|ship\s*to|remit\s*to/i;
+    const hits = [];
+    document.querySelectorAll('*').forEach((el) => {
+      if (el.children.length > 6) return;
+      const t = clean(el.textContent);
+      if (t && t.length < 400 && RE.test(t)) {
+        const box = el.closest('.panel,.card,.well,div,td,section') || el;
+        hits.push({ label: t.slice(0, 180), html: clean(box.outerHTML).slice(0, 1600) });
+      }
+    });
+    const seen = new Set();
+    const uniq = hits.filter((h) => { if (seen.has(h.html)) return false; seen.add(h.html); return true; }).slice(0, 8);
+
+    const ctrls = [];
+    document.querySelectorAll('input,select,textarea').forEach((el) => {
+      const labEl = el.id ? document.querySelector('label[for="' + CSS.escape(el.id) + '"]') : null;
+      const key = clean((el.id || '') + ' ' + (el.getAttribute('name') || '') + ' ' + (labEl ? labEl.textContent : ''));
+      if (/address|billto|shipto|remitto|taxlocation|customerAddress/i.test(key)) {
+        const o = { tag: el.tagName.toLowerCase(), id: el.id || '', name: el.getAttribute('name') || '',
+          label: clean(labEl ? labEl.textContent : ''), value: (el.value || '').slice(0, 90),
+          visible: !!(el.offsetParent || el.getClientRects().length) };
+        if (el.tagName === 'SELECT') {
+          o.options = Array.from(el.options).slice(0, 40).map((x) => ({ v: x.value, t: clean(x.textContent), s: x.selected }));
+        }
+        ctrls.push(o);
+      }
+    });
+    return { uniq, ctrls };
+  });
+
+  say('');
+  say('=== BILL TO / SHIP TO ===');
+  if (!res.uniq.length) say('  (none found)');
+  res.uniq.forEach((h, i) => { say(`--- hit ${i + 1}: ${h.label}`); say('    ' + h.html); });
+
+  say('');
+  say('=== LABOR ITEMS ON THIS ESTIMATE (READ ONLY — never modified) ===');
+  // Everything needed is on the estimate tab. The location comes from the tax
+  // location attached to each LABOR ITEM — not the order-level tax location,
+  // which is often California and would wrongly send every order to Fontana.
+  // Each assigned line reads e.g. "1.1: Assigned  CA Labor  Michael Godinez (100%)".
+  // The two-letter prefix on "<XX> Labor" is the labor tax location for that item.
+  const laborItems = await page.evaluate(() => {
+    const ZW = /[​-‍﻿­]/g;
+    const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+    const RE = /^([A-Za-z]{2})\s+Labor$/;
+    const out = [];
+
+    // It is a <select> listing every state ("AL Labor", "AR Labor", …), so only
+    // the SELECTED option is this item's location. Reading all options would
+    // make the first state in the list look like the answer.
+    document.querySelectorAll('select').forEach((el) => {
+      const opt = el.options && el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
+      if (!opt) return;
+      const m = clean(opt.textContent).match(RE);
+      if (!m) return;
+      const row = el.closest('tr, .row');
+      // The technician name sits beside the dropdown, e.g. "Michael Godinez (100%)".
+      let tech = '';
+      if (row) {
+        const rt = clean(row.textContent);
+        const tm = rt.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z']+)+)\s*\(\d+%\)/);
+        if (tm) tech = tm[1];
+      }
+      out.push({ abbr: m[1].toUpperCase(), tech, id: el.id || '', source: 'select' });
+    });
+
+    // Fallback: a custom (non-native) dropdown rendering the same label.
+    if (!out.length) {
+      document.querySelectorAll('*').forEach((el) => {
+        if (el.children.length > 2) return;
+        if (el.closest('select, option, .dropdown-menu, ul')) return;
+        const m = clean(el.textContent).match(RE);
+        if (m) out.push({ abbr: m[1].toUpperCase(), tech: '', id: el.id || '', source: 'text' });
+      });
+    }
+    const seen = new Set();
+    return out.filter((o) => { const k = o.abbr + '|' + o.tech + '|' + o.id; if (seen.has(k)) return false; seen.add(k); return true; });
+  });
+  if (!laborItems.length) say('  (no "<XX> Labor" items found)');
+  laborItems.forEach((o) => say(`  [${o.abbr}] ${o.tech || '(tech not read)'}  (${o.source}${o.id ? ' #' + o.id : ''})`));
+
+  // Any per-item tax-location control (as opposed to the single order-level one).
+  const perItemTax = await page.evaluate(() => {
+    const ZW = /[​-‍﻿­]/g;
+    const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+    return Array.from(document.querySelectorAll('select, input'))
+      .filter((el) => /tax|rate/i.test((el.id || '') + ' ' + (el.getAttribute('name') || '')))
+      .map((el) => {
+        const opt = el.tagName === 'SELECT' && el.options && el.selectedIndex >= 0
+          ? el.options[el.selectedIndex] : null;
+        return { id: el.id || '', name: el.getAttribute('name') || '',
+          selected: opt ? clean(opt.textContent) : clean(el.value) };
+      });
+  });
+  say('');
+  say('  per-item tax/rate controls:');
+  if (!perItemTax.length) say('    (none)');
+  perItemTax.forEach((c) => say(`    id="${c.id}" name="${c.name}" -> ${JSON.stringify(c.selected)}`));
+
+  const states = [...new Set(laborItems.map((o) => o.abbr))];
+  say('  labor location(s) on this estimate: ' + (states.length ? states.join(', ') : '(none)'));
+  if (states.length > 1) {
+    say('  NOTE: this order carries more than one labor location — a human must decide.');
+  }
+
+  say('');
+  say('=== ADDRESS / TAX-LOCATION CONTROLS ===');
+  if (!res.ctrls.length) say('  (none)');
+  res.ctrls.forEach((c) => {
+    say(`  <${c.tag}> id="${c.id}" name="${c.name}" label="${c.label}" visible=${c.visible} value=${JSON.stringify(c.value)}`);
+    if (c.options) c.options.forEach((o) => say(`      ${o.s ? '*' : ' '} ${JSON.stringify(o.t)} value=${o.v}`));
+  });
+
+  say('');
+  say('=== MARKUP AROUND THE ADDRESS FIELDS (to find the edit control) ===');
+  const addrMarkup = await page.evaluate(() => {
+    const ZW = /[​-‍﻿­]/g;
+    const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+    const out = [];
+    ['billingDisplayAddress', 'shipToDisplayAddress'].forEach((fid) => {
+      const el = document.getElementById(fid);
+      if (!el) { out.push({ field: fid, html: '(field not present)' }); return; }
+      const row = el.closest('tr') || el.closest('div');
+      out.push({ field: fid, html: row ? clean(row.outerHTML).slice(0, 1200) : '(no row)' });
     });
     return out;
   });
+  addrMarkup.forEach((a) => { say(`  --- ${a.field}:`); say('      ' + a.html); });
 
-  // Capture a report page's controls + table so we know how to scrape it.
-  const grabReportShape = () => page.evaluate(() => {
-    const clip = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
-    const inputs = [...document.querySelectorAll('input,select,textarea')].map((el) => ({
-      tag: el.tagName.toLowerCase(), type: el.type || '', name: el.name || '', id: el.id || '',
-      value: clip(el.value, 40),
-      options: el.tagName === 'SELECT' ? [...el.options].slice(0, 14).map((o) => clip(o.textContent, 30) + '=' + o.value) : undefined,
-    })).filter((i) => i.name || i.id);
-    const tables = [...document.querySelectorAll('table')].slice(0, 4).map((t) => ({
-      id: t.id || '', cls: t.className || '',
-      headers: [...t.querySelectorAll('thead th, tr:first-child th, tr:first-child td')].map((th) => clip(th.textContent, 24)).slice(0, 16),
-      rows: [...t.querySelectorAll('tbody tr')].slice(0, 3).map((tr) => [...tr.querySelectorAll('td,th')].map((td) => clip(td.textContent, 22)).slice(0, 16)),
-    }));
-    return { title: document.title, bodyText: clip(document.body.innerText, 500), inputs, tables };
-  });
+  // --- Verdict: what SHOULD this estimate carry? Report only; writes nothing. ---
+  say('');
+  say('=== VERDICT (report only — nothing was changed) ===');
+  try {
+    const taxmap = require('./taxmap');
+    const get = (cid) => { const c = res.ctrls.find((x) => x.id === cid); return c ? c.value : ''; };
+    const current = {
+      billToDisplay: get('billingDisplayAddress'),
+      shipToDisplay: get('shipToDisplayAddress'),
+      taxLocationId: get('entityTaxLocationId'),
+    };
+    // The location comes from the LABOR ITEM's tax location. The order-level
+    // entityTaxLocationId is NOT used as the signal — it reads California on most
+    // orders and would wrongly resolve everything to Fontana.
+    const taxCtrl = res.ctrls.find((x) => x.id === 'entityTaxLocationId');
+    const taxName = taxCtrl && taxCtrl.options
+      ? (taxCtrl.options.find((o) => o.s) || {}).t : '';
+    say(`  bill to now : ${current.billToDisplay || '(unset)'}`);
+    say(`  ship to now : ${current.shipToDisplay || '(unset)'}`);
+    say(`  order-level tax location (context only): ${taxName || '(unset)'}`);
+    const hint = states[0] || '';
+    if (!hint) {
+      say('  Cannot judge: no labor-item location found on this estimate.');
+    } else {
+      say(`  labor-item location: ${hint}`);
+      const verdict = taxmap.checkEstimate(current, hint);
+      if (!verdict.ok) say('  Cannot resolve: ' + verdict.reason);
+      else {
+        say(`  Expected facility: ${verdict.expected.name}${verdict.viaDefault ? ' [via default]' : ''}`);
+        if (!verdict.problems.length) say('  Addresses already correct — nothing to change.');
+        verdict.problems.forEach((p) => {
+          say(`   - ${p.field}: is ${JSON.stringify(p.is)}`);
+          say(`     should be ${JSON.stringify(p.shouldBe)}`);
+        });
+        // Context only — the tax location is never changed.
+        say(`  (tax location ${verdict.taxLocation.agrees ? 'agrees' : 'differs'}: `
+          + `${verdict.taxLocation.current} vs ${verdict.taxLocation.expected} — not changed)`);
+      }
+    }
+  } catch (e) { say('  verdict failed: ' + e.message); }
 
-  const dump = [];
-  const line = (s) => { dump.push(s); };
+  finish();
+  log('\nWrote estimate-dump.txt and estimate-view.png');
+}
 
-  // 1) Open the real Reporting index discovered earlier.
-  const reportingUrl = CONFIG.baseUrl + '/office/configuration/indexReports.html';
-  await page.goto(reportingUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
-  await sleep(1200);
-  line('=== Reporting index: ' + reportingUrl + ' (title: ' + (await page.title().catch(() => '')) + ') ===');
-  const idxBody = await page.evaluate(() => (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 600)).catch(() => '');
-  line('  body: ' + idxBody);
-  const idxLinks = await grabAllLinks();
-  line('\n--- All links on the Reporting index (' + idxLinks.length + ') ---');
-  idxLinks.forEach((l) => line('  ' + (l.text || '(no text)') + '   ->   ' + l.href));
 
-  // 2) The reports are "View Report" buttons (JS-wired). Capture how each is
-  //    wired so we can find the Completed Hours Report's URL/endpoint.
-  const reportCards = await page.evaluate(() => {
-    const clip = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
+/* ----------------------------------------------------------------------------
+ * OPEN SERVICE ORDERS — the second half of the audit.
+ *
+ * Ready-to-Invoice asks "is this billable yet"; this asks "what is holding this
+ * order up". Reads Tech Home's Open SOs list, then opens each order and runs the
+ * O-checks over its action items.
+ * -------------------------------------------------------------------------- */
+const OPEN_SOS_PATH = '/office/indexOpenSOs.html';
+
+/** The Open SOs list: one row per order, with the repairOrderId dug out of the table data. */
+async function readOpenSoRows(page) {
+  await page.goto(CONFIG.baseUrl + OPEN_SOS_PATH, { waitUntil: 'domcontentloaded' }).catch(() => {});
+  await page.waitForSelector('#openSOTable', { timeout: 30000 }).catch(() => {});
+  await sleep(2500);
+  return page.evaluate(() => {
+    const ZW = /[​-‍﻿­]/g;
+    const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+    const jq = window.jQuery || window.$;
+    const tbl = document.getElementById('openSOTable');
+    if (!tbl) return [];
+    let data = [];
+    try { if (jq && jq.fn.dataTable) data = jq('#openSOTable').DataTable().rows().data().toArray(); } catch (e) { /* ignore */ }
+    return Array.from(tbl.querySelectorAll('tbody tr')).map((tr, i) => {
+      const td = Array.from(tr.querySelectorAll('td')).map((c) => clean(c.textContent));
+      const blob = JSON.stringify(data[i] || '');
+      const m = blob.match(/repairOrderId[^0-9]{0,8}(\d+)/i) || blob.match(/windowOpen[^0-9]{0,20}(\d+)/i);
+      return {
+        soNumber: td[1] || '', serviceWriter: td[2] || '', leadTech: td[3] || '',
+        assignedTech: td[4] || '', unit: td[5] || '', customer: td[6] || '',
+        complaint: td[7] || '', ageText: td[10] || '', serviceStatus: td[11] || '',
+        partsStatus: td[12] || '', noteCount: td[13] || '',
+        repairOrderId: m ? m[1] : '',
+      };
+    }).filter((r) => r.soNumber);
+  }).catch(() => []);
+}
+
+/** Audit every open order. Returns [{ ...row, findings }]. */
+async function auditOpenSos(page) {
+  const rows = await readOpenSoRows(page);
+  if (!rows.length) { log('Open SOs: none found (or the list did not load).'); return []; }
+  const limit = CONFIG.maxOpenOrders > 0 ? Math.min(CONFIG.maxOpenOrders, rows.length) : rows.length;
+  log(`\nOpen SOs: ${rows.length} open order(s); auditing ${limit}.`);
+
+  const out = [];
+  for (let i = 0; i < limit; i++) {
+    const r = rows[i];
+    process.stdout.write(`  [${i + 1}/${limit}] ${r.soNumber} (${r.ageText}) ... `);
+    if (!r.repairOrderId) { log('no order id — skipped'); out.push({ ...r, findings: [], error: 'No order id' }); continue; }
+    try {
+      const ok = await openOrderById(page, r.repairOrderId);
+      if (!ok) { log('no action items — skipped'); out.push({ ...r, findings: [], error: 'No action items' }); continue; }
+      const so = await page.evaluate(extractServiceOrderInPage);
+      const merged = { ...so, ...r, actionItems: so.actionItems };
+      const findings = runOpenAudit(merged, { staleDays: CONFIG.openStaleDays });
+      out.push({ ...merged, findings });
+      log(`${so.actionItems.length} items, ${findings.length} issue(s)`);
+    } catch (e) {
+      log('ERROR: ' + e.message);
+      out.push({ ...r, findings: [], error: e.message });
+    }
+  }
+  return out;
+}
+
+
+/*
+ * writeOpenHtml — standalone report for the Open-SO audit, so "Run Open Audit"
+ * has somewhere to land without touching the Ready-to-Invoice report.
+ */
+const OPEN_CHECK_NAMES = {
+  O1: 'Open too long', O2: 'Still in progress', O3: 'Not started',
+  O4: 'Awaiting parts quote', O5: 'No parts on repair',
+  O6: 'No photos', O7: 'Missing before/after',
+};
+
+function writeOpenHtml(openOrders) {
+  const flagged = openOrders.filter((o) => o.findings.length).length;
+  const blockers = openOrders.reduce((n, o) => n + o.findings.filter((f) => f.severity === 'blocker').length, 0);
+  const stale = openOrders.filter((o) => o.findings.some((f) => f.check === 'O1')).length;
+  const sorted = openOrders.slice().sort((a, b) => ageInDaysSafe(b.ageText) - ageInDaysSafe(a.ageText));
+
+  const cards = sorted.map((o) => {
+    const worst = o.findings.some((f) => f.severity === 'blocker') ? 'blocker'
+      : (o.findings.length ? 'warning' : 'ok');
+    const items = o.findings.length
+      ? o.findings.map((f) => `<div class="f ${f.severity}">
+          <span class="tag">${f.check} · ${OPEN_CHECK_NAMES[f.check] || ''}</span>
+          <strong>${esc(f.title)}</strong>${f.technician ? ' <span class="tech">' + esc(f.technician) + '</span>' : ''}
+          <div class="det">${esc(f.detail)}</div></div>`).join('')
+      : '<div class="f ok">Nothing outstanding.</div>';
+    return `<div class="so ${worst}">
+      <div class="so-head"><strong>${esc(o.soNumber)}</strong>
+        <span class="age">${esc(o.ageText || '')}</span>
+        <span class="meta">${esc(o.customer || '')} ${o.unit ? '· Unit ' + esc(o.unit) : ''}
+          ${o.assignedTech ? '· Tech: ' + esc(o.assignedTech) : ''}</span>
+        <span class="sheet ${/done/i.test(o.partsStatus || '') ? 'yes' : 'warn'}">Parts: ${esc(o.partsStatus || 'not set')}</span>
+        <span class="sheet warn">${esc(o.serviceStatus || '')}</span>
+      </div>${items}</div>`;
+  }).join('');
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Open SO Audit</title>
+<style>
+  body{margin:0;background:#f4f7fb;font-family:"Segoe UI",system-ui,sans-serif;color:#0b2341}
+  .banner{background:linear-gradient(120deg,#15356b,#0b2341);color:#fff;padding:26px 0}
+  .banner h1{margin:0;font-size:24px;font-weight:800;letter-spacing:-.02em}
+  .banner .sub{font-size:13px;color:#bcd0ee;margin-top:6px}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 18px}
+  .tiles{max-width:1120px;margin:18px auto;padding:0 18px;display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .tile{background:#fff;border:1px solid #e3e9f2;border-radius:14px;padding:16px;text-align:center}
+  .tile .n{font-size:26px;font-weight:800}
+  .tile .l{font-size:11.5px;color:#7b8aa3;margin-top:4px}
+  .tile.red .n{color:#dc2626}.tile.amber .n{color:#a16207}.tile.green .n{color:#16a34a}
+  .so{background:#fff;border:1px solid #e3e9f2;border-left:5px solid #cbd5e1;border-radius:12px;padding:14px 18px;margin-bottom:12px}
+  .so.blocker{border-left-color:#dc2626}.so.warning{border-left-color:#f59e0b}.so.ok{border-left-color:#16a34a}
+  .so-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:9px}
+  .so-head strong{font-size:15px}
+  .meta{font-size:12px;color:#7b8aa3}
+  .age{font-size:11px;font-weight:700;background:#eef3fa;color:#15356b;border-radius:20px;padding:4px 11px;white-space:nowrap}
+  .sheet{font-size:11px;font-weight:700;border-radius:20px;padding:4px 11px;white-space:nowrap}
+  .sheet.yes{background:#dcfce7;color:#15803d}.sheet.warn{background:#fef3c7;color:#a16207}
+  .f{border-radius:9px;padding:9px 12px;margin-bottom:7px;font-size:13px;background:#f7f9fc}
+  .f.blocker{background:#fef2f2}.f.warning{background:#fffbeb}.f.ok{background:#f0fdf4;color:#15803d}
+  .tag{font-size:10.5px;font-weight:800;letter-spacing:.04em;color:#64748b;margin-right:7px}
+  .tech{font-size:11px;color:#7b8aa3}
+  .det{font-size:12px;color:#526179;margin-top:3px}
+  @media(max-width:680px){.tiles{grid-template-columns:repeat(2,1fr)}}
+</style></head><body>
+  <div class="banner"><div class="wrap"><h1>Open SO Audit</h1>
+    <div class="sub">${openOrders.length} open orders · ${new Date().toLocaleString()}</div></div></div>
+  <div class="tiles">
+    <div class="tile"><div class="n">${openOrders.length}</div><div class="l">Open orders</div></div>
+    <div class="tile red"><div class="n">${flagged}</div><div class="l">With something outstanding</div></div>
+    <div class="tile amber"><div class="n">${stale}</div><div class="l">Open too long</div></div>
+    <div class="tile red"><div class="n">${blockers}</div><div class="l">Blockers</div></div>
+  </div>
+  <div class="wrap">${cards}</div>
+</body></html>`;
+  fs.writeFileSync(dataPath('open-report.html'), html, 'utf8');
+}
+
+/* node audit.js open — audit the open orders on their own. */
+async function runOpenOnly(page, context) {
+  if (!(await ensureListLoaded(page))) { log('Not signed into Fullbay — aborting.'); return; }
+  const results = await auditOpenSos(page);
+  fs.writeFileSync(dataPath('open-sos.json'),
+    JSON.stringify({ generatedAt: new Date().toISOString(), orders: results }, null, 2), 'utf8');
+  writeOpenHtml(results);
+  const flagged = results.filter((r) => r.findings.length).length;
+  log(`\nDone. ${flagged} of ${results.length} open orders have something outstanding.`);
+  log('Reports written: open-report.html  and  open-sos.json');
+}
+
+/* ----------------------------------------------------------------------------
+ * OPEN-SO PROBE (READ-ONLY) — node audit.js opensos
+ *
+ * The audit only ever looks at Ready-to-Invoice. Tech Home has an "Open SO's"
+ * tab listing orders still in progress and how long they have been open. This
+ * finds that page and dumps its columns and rows, so we can see what is
+ * available to audit before building anything on it.
+ * -------------------------------------------------------------------------- */
+async function runOpenSosProbe(page, context) {
+  const out = [];
+  const say = (s = '') => { log(s); out.push(s); };
+  const finish = () => fs.writeFileSync(dataPath('opensos-probe.txt'), out.join('\n'), 'utf8');
+
+  if (!(await ensureListLoaded(page))) { say('Not signed into Fullbay — aborting.'); finish(); return; }
+  say('Signed in.');
+
+  // Find Tech Home from the left nav rather than guessing at a URL.
+  const navLinks = await page.evaluate(() => {
+    const ZW = /[​-‍﻿­]/g;
+    const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+    return Array.from(document.querySelectorAll('a')).map((a) => ({
+      text: clean(a.textContent).slice(0, 40), href: a.getAttribute('href') || '',
+    })).filter((l) => /tech\s*home|open\s*so/i.test(l.text) || /techHome|technicianHome/i.test(l.href));
+  }).catch(() => []);
+  say('');
+  say('=== NAV LINKS THAT LOOK RELEVANT ===');
+  if (!navLinks.length) say('  (none found on the current page)');
+  [...new Map(navLinks.map((l) => [l.text + l.href, l])).values()]
+    .forEach((l) => say(`  "${l.text}"  href=${l.href}`));
+
+  const techHref = (navLinks.find((l) => /tech\s*home/i.test(l.text)) || {}).href;
+  if (techHref) {
+    const url = techHref.startsWith('http') ? techHref : CONFIG.baseUrl + techHref;
+    say('');
+    say('=== TECH HOME: ' + url);
+    await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await sleep(4500);
+    say('  landed: ' + page.url());
+
+    const tabs = await page.evaluate(() => {
+      const ZW = /[​-‍﻿­]/g;
+      const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+      return Array.from(document.querySelectorAll('a,button,li'))
+        .map((e) => ({ text: clean(e.textContent).slice(0, 40), href: e.getAttribute('href') || '',
+          target: e.getAttribute('data-target') || e.getAttribute('data-modal') || '' }))
+        .filter((t) => t.text && t.text.length < 34 && /open|invoice|progress|assigned|so/i.test(t.text));
+    }).catch(() => []);
+    say('');
+    say('=== TABS / LINKS ON TECH HOME ===');
+    [...new Map(tabs.map((t) => [t.text + t.href, t])).values()].slice(0, 30)
+      .forEach((t) => say(`  "${t.text}"  href=${t.href} target=${t.target}`));
+
+    // Click anything that reads as the Open SOs tab, then dump the table.
+    const clicked = await page.evaluate(() => {
+      const ZW = /[​-‍﻿­]/g;
+      const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+      const el = Array.from(document.querySelectorAll('a,button,li'))
+        .find((e) => /^open\s*so'?s?$/i.test(clean(e.textContent)));
+      if (!el) return false;
+      el.click(); return true;
+    }).catch(() => false);
+    say('');
+    say('clicked an "Open SOs" tab: ' + clicked);
+    await sleep(2000);
+
+    // The tab is its own page; go there directly so the table actually loads.
+    const openHref = (tabs.find((t) => /indexOpenSOs/i.test(t.href)) || {}).href
+      || '/office/indexOpenSOs.html';
+    const openUrl = (openHref.startsWith('http') ? openHref : CONFIG.baseUrl + openHref);
+    say('=== OPEN SOs PAGE: ' + openUrl);
+    await page.goto(openUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await sleep(6000);
+    say('  landed: ' + page.url());
+
+    const tables = await page.evaluate(() => {
+      const ZW = /[​-‍﻿­]/g;
+      const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+      const vis = (el) => !!(el.offsetParent || el.getClientRects().length);
+      return Array.from(document.querySelectorAll('table')).filter(vis).map((t) => ({
+        id: t.id || '(none)',
+        rows: t.querySelectorAll('tbody tr').length,
+        head: Array.from(t.querySelectorAll('thead th')).map((h) => clean(h.textContent)).filter(Boolean),
+        sample: Array.from(t.querySelectorAll('tbody tr')).slice(0, 5)
+          .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => clean(td.textContent).slice(0, 28))),
+      })).filter((t) => t.rows > 0);
+    }).catch(() => []);
+    say('');
+    say('=== TABLES VISIBLE NOW ===');
+    if (!tables.length) say('  (none with rows)');
+    tables.forEach((t) => {
+      say('');
+      say(`  table id=${t.id}  rows=${t.rows}`);
+      if (t.head.length) say('    columns: ' + t.head.join(' | '));
+      t.sample.forEach((r) => say('    ' + r.join(' | ')));
+    });
+  } else {
+    say('');
+    say('Could not find a Tech Home link from the current page.');
+  }
+  // Row ids so the orders can actually be opened, then inspect one to learn the
+  // action-item status vocabulary and how parts state is shown.
+  const rows = await page.evaluate(() => {
+    const ZW = /[​-‍﻿­]/g;
+    const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+    const jq = window.jQuery || window.$;
     const out = [];
-    document.querySelectorAll('a,button').forEach((el) => {
-      const t = clip(el.textContent, 40);
-      if (!/view report|report/i.test(t) && !/report/i.test(el.className)) return;
-      const card = el.closest('tr,li,.card,.panel,.report-row,.report,div');
-      const dataAttrs = [...el.attributes].filter((a) => /^data-|^href$|^onclick$/.test(a.name)).map((a) => a.name + '=' + clip(a.value, 120));
-      out.push({
-        text: t,
-        near: card ? clip(card.innerText, 70) : '',
-        attrs: dataAttrs,
-        html: clip((card || el).outerHTML, 360),
-      });
+    const tbl = document.getElementById('openSOTable');
+    if (!tbl) return out;
+    // The repairOrderId hides in the DataTable's row data, same as the
+    // Ready-to-Invoice list, not in the visible markup.
+    let data = [];
+    try { if (jq && jq.fn.dataTable) data = jq('#openSOTable').DataTable().rows().data().toArray(); } catch (e) { /* ignore */ }
+    Array.from(tbl.querySelectorAll('tbody tr')).forEach((tr, i) => {
+      const tds = Array.from(tr.querySelectorAll('td')).map((td) => clean(td.textContent));
+      let id = '';
+      const blob = JSON.stringify(data[i] || '');
+      const m = blob.match(/repairOrderId[^0-9]{0,8}(\d+)/i) || blob.match(/windowOpen[^0-9]{0,20}(\d+)/i);
+      if (m) id = m[1];
+      out.push({ so: tds[1] || '', age: tds[10] || '', svc: tds[11] || '', parts: tds[12] || '', id });
     });
     return out;
   }).catch(() => []);
-  line('\n--- "View Report" buttons & their wiring (' + reportCards.length + ') ---');
-  reportCards.forEach((c) => {
-    line('  • ' + c.near);
-    line('     attrs: ' + (c.attrs.join('  ') || '(none)'));
-    line('     html: ' + c.html);
-  });
+  say('');
+  say('=== OPEN SOs WITH IDS ===');
+  rows.forEach((r) => say(`  ${r.so.padEnd(10)} age=${r.age.padEnd(8)} service=${r.svc.padEnd(12)} parts=${(r.parts || '-').padEnd(8)} id=${r.id || 'NOT FOUND'}`));
 
-  // 3) Try opening the Completed Hours Report by clicking its button, then capture shape.
-  const opened = await page.evaluate(() => {
-    const rows = [...document.querySelectorAll('tr,li,.card,.panel,.report-row,.report,div')];
-    const card = rows.find((r) => /completed hours report/i.test(r.textContent || ''));
-    if (!card) return false;
-    const btn = [...card.querySelectorAll('a,button')].find((b) => /view report|view/i.test(b.textContent || '')) || card.querySelector('a,button');
-    if (!btn) return false;
-    btn.click();
-    return true;
-  }).catch(() => false);
-  if (opened) {
-    await page.waitForLoadState('domcontentloaded').catch(() => {});
-    await sleep(2200);
-    line('\n=== Completed Hours Report (after clicking View Report) ===');
-    line('  URL now: ' + page.url());
-    const shape = await grabReportShape().catch(() => null);
-    if (shape) {
-      line('  title: ' + shape.title);
-      line('  body: ' + shape.bodyText);
-      line('  inputs/controls:');
-      shape.inputs.forEach((i) => line('    [' + i.tag + (i.type ? ':' + i.type : '') + '] name=' + i.name + ' id=' + i.id + (i.value ? ' value=' + i.value : '') + (i.options ? ' options=' + i.options.join(', ') : '')));
-      shape.tables.forEach((tb, n) => {
-        line('  table#' + n + ' id=' + tb.id + ' class=' + tb.cls);
-        line('    headers: ' + tb.headers.join(' | '));
-        tb.rows.forEach((r) => line('    row: ' + r.join(' | ')));
+  const first = rows.find((r) => r.id);
+  if (first) {
+    say('');
+    say('=== ACTION ITEMS ON ' + first.so + ' (an open order) ===');
+    await openOrderById(page, first.id);
+    await sleep(2500);
+    const items = await page.evaluate(() => {
+      const ZW = /[​-‍﻿­]/g;
+      const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+      return Array.from(document.querySelectorAll('.soai-container')).map((c) => {
+        const nEl = c.querySelector('[data-soai-action-item-number]');
+        const sel = c.querySelector('select[id^="status"]');
+        const status = sel && sel.options[sel.selectedIndex] ? clean(sel.options[sel.selectedIndex].textContent) : '';
+        const allStatuses = sel ? Array.from(sel.options).map((o) => clean(o.textContent)) : [];
+        const steps = Array.from(c.querySelectorAll('.progress-step label')).map((l) => clean(l.textContent));
+        const body = clean(c.textContent);
+        return {
+          num: nEl ? nEl.getAttribute('data-soai-action-item-number') : '',
+          note: clean((c.querySelector('.soai-original-note-container p') || {}).textContent).slice(0, 60),
+          status,
+          allStatuses,
+          steps,
+          quote: /needs?\s*quote|quote\s*needed|awaiting\s*quote/i.test(body),
+        };
       });
-    } else { line('  (could not read report page)'); }
-  } else {
-    line('\n(Completed Hours Report button not found to click.)');
+    }).catch(() => []);
+    items.forEach((it) => {
+      say('');
+      say(`  AI ${it.num}  status="${it.status}"  needsQuoteText=${it.quote}  "${it.note}"`);
+      say('    progress steps: ' + (it.steps.join(' | ') || '(none)'));
+    });
+    if (items[0]) {
+      say('');
+      say('=== FULL STATUS VOCABULARY (dropdown options) ===');
+      items[0].allStatuses.forEach((s) => say('    ' + s));
+    }
   }
 
-  const outFile = path.join(__dirname, 'fullbay-reports-probe.txt');
-  fs.writeFileSync(outFile, dump.join('\n'), 'utf8');
-  log('Wrote ' + outFile);
-  log('Done — open that file to see the reports and their date controls/table layout.');
-  await sleep(1200);
+  finish();
+  log('\nWrote opensos-probe.txt');
 }
 
 /* ----------------------------------------------------------------------------
- * Completed Hours Report probe (MODE=completedhours). Opens the Completed Hours
- * report modal, fills a date range, runs it, and captures the modal form, the
- * network request it fires, and the resulting per-employee table — everything
- * needed to scrape completed (invoiced) hours per mechanic by week.
+ * PARTS PROBE (READ-ONLY) — node audit.js parts <SO or repairOrderId>
+ *
+ * Check B currently knows only a yes/no "No Parts" flag per action item. To
+ * honour "the parts for both sensors went on one item", we need to know HOW
+ * MANY parts each item carries. This dumps whatever the page exposes so we can
+ * see whether a count is available at all.
  * -------------------------------------------------------------------------- */
-async function runCompletedHoursProbe(page, context) {
-  if (!(await ensureListLoaded(page))) { log('Not signed into Fullbay — aborting.'); return; }
-  log('Signed in. Opening the Completed Hours Report…');
+async function runPartsProbe(page, context) {
+  const out = [];
+  const say = (s = '') => { log(s); out.push(s); };
+  const finish = () => fs.writeFileSync(dataPath('parts-probe.txt'), out.join('\n'), 'utf8');
 
-  const reqs = [];
-  page.on('request', (r) => {
-    const u = r.url();
-    if (/report|completed|hours|datapoint|handle|configuration/i.test(u) && !/\.(png|jpg|gif|css|woff|js)(\?|$)/i.test(u)) {
-      reqs.push(r.method() + ' ' + u + (r.postData() ? '  BODY: ' + r.postData().slice(0, 400) : ''));
+  if (!(await ensureListLoaded(page))) { say('Not signed into Fullbay — aborting.'); finish(); return; }
+  let id = (process.argv[3] || '').trim();
+  if (/^so-?\d+$/i.test(id) || /^\d{1,6}$/.test(id)) {
+    await showAllRows(page);
+    const rows = await readListRows(page);
+    const want = id.replace(/^so-?/i, '');
+    const hit = rows.find((r) => String(r.soNumber || '').replace(/^so-?/i, '') === want && r.repairOrderId);
+    if (!hit) { say('SO not found in the list.'); finish(); return; }
+    id = hit.repairOrderId;
+  }
+  await openOrderById(page, id);
+  await sleep(2500);
+  say('url: ' + page.url());
+
+  const info = await page.evaluate(() => {
+    const ZW = /[​-‍﻿­]/g;
+    const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+    return Array.from(document.querySelectorAll('.soai-container')).map((c) => {
+      const nEl = c.querySelector('[data-soai-action-item-number]');
+      const num = nEl ? nEl.getAttribute('data-soai-action-item-number') : '';
+      const note = clean((c.querySelector('.soai-original-note-container p') || {}).textContent);
+      let noParts = false;
+      c.querySelectorAll('.progress-step label').forEach((l) => {
+        if (/^No Parts$/i.test(clean(l.textContent))) noParts = true;
+      });
+      // Anything inside the item whose id/class/text mentions parts.
+      const hits = [];
+      c.querySelectorAll('*').forEach((e) => {
+        if (e.children.length > 3) return;
+        const key = (e.id || '') + ' ' + String(e.className && e.className.baseVal === undefined ? e.className : '');
+        const txt = clean(e.textContent);
+        if (/part/i.test(key) || /^\s*parts?/i.test(txt)) {
+          hits.push({ tag: e.tagName.toLowerCase(), id: e.id || '', cls: String(key).slice(0, 46), txt: txt.slice(0, 70) });
+        }
+      });
+      const seen = new Set();
+      return { num, note: note.slice(0, 70), noParts,
+        hits: hits.filter((h) => { const k = h.id + h.cls + h.txt; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 10) };
+    });
+  }).catch(() => []);
+
+  say('action items found: ' + info.length);
+  info.forEach((ai) => {
+    say('');
+    say(`AI ${ai.num}  noParts=${ai.noParts}  "${ai.note}"`);
+    if (!ai.hits.length) say('   (nothing parts-like inside this item)');
+    ai.hits.forEach((h) => say(`   <${h.tag}> id="${h.id}" cls="${h.cls}" text="${h.txt}"`));
+  });
+  // Nothing parts-like sits inside an action item, so look at the Parts List tab.
+  say('');
+  say('=== PARTS LIST TAB ===');
+  await page.goto(`${CONFIG.baseUrl}/office/workorder/partsList.html?repairOrderId=${id}`,
+    { waitUntil: 'domcontentloaded' }).catch(() => {});
+  await sleep(3500);
+  say('url: ' + page.url());
+  const parts = await page.evaluate(() => {
+    const ZW = /[​-‍﻿­]/g;
+    const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+    const tables = Array.from(document.querySelectorAll('table')).map((t) => ({
+      id: t.id || '(none)',
+      rows: t.querySelectorAll('tbody tr').length,
+      head: Array.from(t.querySelectorAll('thead th')).map((h) => clean(h.textContent)).filter(Boolean),
+      sample: Array.from(t.querySelectorAll('tbody tr')).slice(0, 8)
+        .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => clean(td.textContent).slice(0, 34))),
+    }));
+    return { tables, onLogin: !!document.querySelector('input[type="password"]') };
+  }).catch((e) => ({ error: e.message }));
+  if (parts.error) say('  could not read: ' + parts.error);
+  else {
+    say('  on login page: ' + parts.onLogin);
+    (parts.tables || []).forEach((t) => {
+      say('');
+      say(`  table id=${t.id} rows=${t.rows}`);
+      if (t.head.length) say('    columns: ' + t.head.join(' | '));
+      t.sample.forEach((r) => say('    ' + r.join(' | ')));
+    });
+  }
+
+  finish();
+  log('\nWrote parts-probe.txt');
+}
+
+/* ----------------------------------------------------------------------------
+ * ESTIMATE ADDRESS FIX — the one place FreeAudit WRITES to Fullbay.
+ *
+ * Sets the Bill To and Ship To addresses on an estimate to the facility that
+ * matches the labour location on the order's action items ("GA Labor" -> the
+ * Atlanta, GA address). The tax location is never touched, the labour rate is
+ * never touched, and a new vendor address is never created.
+ *
+ * It refuses to act unless the situation is unambiguous:
+ *   - every labour item on the order agrees on one location
+ *   - that location resolves to exactly one facility (see taxmap.js)
+ *   - the picker offers a row whose title matches that facility exactly
+ * Anything else is reported and left alone. Every change is verified by
+ * re-reading the field afterwards.
+ * -------------------------------------------------------------------------- */
+const ZW_SRC = '[\\u200B-\\u200D\\uFEFF\\u00AD]';
+
+/** Read what the estimate currently says. Pure read. */
+async function readEstimateState(page, repairOrderId) {
+  await page.goto(`${CONFIG.baseUrl}/office/workorder/approveRepairOrderQuote.html?repairOrderId=${repairOrderId}`,
+    { waitUntil: 'domcontentloaded' });
+  await sleep(3500);
+  return page.evaluate((zw) => {
+    const ZW = new RegExp(zw, 'g');
+    const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+    const val = (id) => { const el = document.getElementById(id); return el ? clean(el.value) : ''; };
+    // Labour location: the DISPLAYED value of each item's "<XX> Labor" dropdown.
+    const RE = /^([A-Za-z]{2})\s+Labor$/;
+    const abbrs = [];
+    document.querySelectorAll('select').forEach((el) => {
+      const o = el.options && el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
+      const m = o && clean(o.textContent).match(RE);
+      if (m) abbrs.push(m[1].toUpperCase());
+    });
+    if (!abbrs.length) {
+      document.querySelectorAll('*').forEach((el) => {
+        if (el.children.length > 2) return;
+        if (el.closest('select, option, .dropdown-menu, ul')) return;
+        const m = clean(el.textContent).match(RE);
+        if (m) abbrs.push(m[1].toUpperCase());
+      });
     }
+    return {
+      billToDisplay: val('billingDisplayAddress'),
+      shipToDisplay: val('shipToDisplayAddress'),
+      billToId: val('billingCustomerAddressId'),
+      shipToId: val('shipToCustomerAddressId'),
+      laborAbbrs: [...new Set(abbrs)],
+    };
+  }, ZW_SRC);
+}
+
+/**
+ * Point one address field at `facilityName` using the same picker a person uses.
+ * Returns { ok, reason?, chose? }.
+ */
+async function applyAddress(page, which, facilityName) {
+  const fieldId = which === 'billing' ? 'billingDisplayAddress' : 'shipToDisplayAddress';
+
+  const opened = await page.evaluate((fid) => {
+    const el = document.getElementById(fid);
+    if (!el) return 'field missing';
+    const grp = el.closest('.input-group');
+    const pencil = grp && grp.querySelector('span[onclick*="openFindAddressModal"]');
+    if (!pencil) return 'no edit control';
+    pencil.click();
+    return 'ok';
+  }, fieldId);
+  if (opened !== 'ok') return { ok: false, reason: opened };
+  await sleep(2500);
+
+  // Show every address — the picker paginates at 10 and the match may be deeper.
+  await page.evaluate(() => {
+    const sel = document.querySelector('select[name="addresslist_length"]');
+    if (sel) {
+      sel.value = '100';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }).catch(() => {});
+  await sleep(1200);
+
+  // Click the row whose TITLE matches the facility exactly. Never "Add New Address".
+  const picked = await page.evaluate((args) => {
+    const ZW = new RegExp(args.zw, 'g');
+    const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+    const want = clean(args.facility).toLowerCase();
+    const rows = Array.from(document.querySelectorAll('#addresslist tbody tr'));
+    for (const tr of rows) {
+      const oc = tr.getAttribute('onclick') || '';
+      if (!/^selectAddress\(/.test(oc)) continue;         // ignore Add New / Clear
+      const cells = tr.querySelectorAll('td');
+      const title = clean(cells[1] ? cells[1].textContent : '');
+      if (title.toLowerCase() === want) { tr.click(); return { ok: true, chose: title }; }
+    }
+    return { ok: false, reason: 'no row titled "' + args.facility + '" in the picker' };
+  }, { facility: facilityName, zw: ZW_SRC });
+
+  await sleep(3000); // let selectAddress() fire the field save
+  return picked;
+}
+
+/**
+ * Fix one order. Returns a result describing what happened — never throws.
+ */
+async function fixOrderAddresses(page, repairOrderId, soNumber) {
+  const taxmap = require('./taxmap');
+  const label = soNumber || repairOrderId;
+  const before = await readEstimateState(page, repairOrderId);
+
+  if (before.laborAbbrs.length === 0) {
+    return { so: label, action: 'skipped', reason: 'no labour location on the estimate' };
+  }
+  if (before.laborAbbrs.length > 1) {
+    return { so: label, action: 'skipped', reason: `mixed labour locations (${before.laborAbbrs.join(', ')}) — needs a human` };
+  }
+  const abbr = before.laborAbbrs[0];
+  const verdict = taxmap.checkEstimate(before, abbr);
+  if (!verdict.ok) return { so: label, action: 'skipped', reason: `${abbr}: ${verdict.reason}` };
+  if (!verdict.problems.length) {
+    return { so: label, action: 'ok', reason: `already set to ${verdict.expected.name}` };
+  }
+
+  const facility = verdict.expected.name;
+  const changed = [];
+  const failed = [];
+  for (const p of verdict.problems) {
+    const which = p.field === 'billTo' ? 'billing' : 'shipTo';
+    const r = await applyAddress(page, which, facility);
+    if (r.ok) changed.push(p.field); else failed.push(`${p.field}: ${r.reason}`);
+  }
+
+  // Verify by re-reading the estimate rather than trusting the click.
+  const after = await readEstimateState(page, repairOrderId);
+  const stillWrong = taxmap.checkEstimate(after, abbr);
+  const verified = stillWrong.ok && stillWrong.problems.length === 0;
+
+  return {
+    so: label,
+    action: verified ? 'fixed' : (changed.length ? 'partial' : 'failed'),
+    facility,
+    abbr,
+    changed,
+    failed,
+    before: { billTo: before.billToDisplay, shipTo: before.shipToDisplay },
+    after: { billTo: after.billToDisplay, shipTo: after.shipToDisplay },
+    verified,
+  };
+}
+
+/* ----------------------------------------------------------------------------
+ * ADDRESS-PICKER PROBE (READ-ONLY) — node audit.js addrmodal <SO or id>
+ *
+ * Opens the Bill To address picker (the pencil next to the field, which calls
+ * openFindAddressModal) and dumps the choices it offers, so the automatic fix
+ * can select an entry the same way a person does. Nothing is chosen or saved.
+ * Never touches the separate "Add Address" button — new vendor addresses are
+ * strictly off-limits.
+ * -------------------------------------------------------------------------- */
+/*
+ * node audit.js fixaddresses   — set Bill To / Ship To on EVERY Ready-to-Invoice
+ * order to match its labour location. This is the only thing FreeAudit does that
+ * writes to Fullbay, and it is deliberately SEPARATE from the audit: an audit
+ * stays read-only and can be run any time without changing records.
+ *
+ * Skips anything ambiguous rather than guessing. Writes address-fixes.json.
+ */
+async function runFixAddresses(page, context) {
+  if (!(await ensureListLoaded(page))) { log('Not signed into Fullbay — aborting.'); return; }
+  await showAllRows(page);
+  const rows = (await readListRows(page)).filter((r) => r.repairOrderId);
+  const limit = CONFIG.maxOrders > 0 ? Math.min(CONFIG.maxOrders, rows.length) : rows.length;
+  log(`Fixing estimate addresses on ${limit} order(s).\n`);
+
+  const out = [];
+  for (let i = 0; i < limit; i++) {
+    const r = rows[i];
+    process.stdout.write(`  [${i + 1}/${limit}] ${r.soNumber} ... `);
+    try {
+      const fx = await fixOrderAddresses(page, r.repairOrderId, r.soNumber);
+      out.push(fx);
+      if (fx.action === 'fixed') log(`set to ${fx.facility} (labour ${fx.abbr})`);
+      else if (fx.action === 'ok') log(`already correct (${fx.reason})`);
+      else if (fx.action === 'skipped') log(`skipped — ${fx.reason}`);
+      else log(`${fx.action} — ${(fx.failed || []).join('; ')}`);
+    } catch (e) {
+      log(`error — ${e.message}`);
+      out.push({ so: r.soNumber, action: 'error', reason: e.message });
+    }
+  }
+
+  const n = (a) => out.filter((f) => f.action === a).length;
+  const problems = out.filter((f) => ['partial', 'failed', 'error'].includes(f.action));
+  log(`\nDone. ${n('fixed')} fixed, ${n('ok')} already correct, ${n('skipped')} left for a human, ${problems.length} problem(s).`);
+  if (problems.length) {
+    log('Orders whose addresses could NOT be set:');
+    problems.forEach((f) => log(`  ${f.so} — ${f.reason || (f.failed || []).join('; ')}`));
+  }
+  fs.writeFileSync(dataPath('address-fixes.json'),
+    JSON.stringify({ ranAt: new Date().toISOString(), results: out }, null, 2), 'utf8');
+  log('Wrote address-fixes.json');
+}
+
+/*
+ * node audit.js fixaddr <SO or repairOrderId>   — fix ONE order (writes).
+ * Used to verify the writer on a single known order before it runs across a
+ * whole audit.
+ */
+async function runFixAddr(page, context) {
+  if (!(await ensureListLoaded(page))) { log('Not signed into Fullbay — aborting.'); return; }
+  let id = (process.argv[3] || '').trim();
+  let so = '';
+  if (!id) { log('usage: node audit.js fixaddr <SO-number or repairOrderId>'); return; }
+  if (/^so-?\d+$/i.test(id) || /^\d{1,6}$/.test(id)) {
+    await showAllRows(page);
+    const rows = await readListRows(page);
+    const want = id.replace(/^so-?/i, '');
+    const hit = rows.find((r) => String(r.soNumber || '').replace(/^so-?/i, '') === want && r.repairOrderId);
+    if (!hit) { log(`SO ${id} is not in the Ready-to-Invoice list.`); return; }
+    so = hit.soNumber; id = hit.repairOrderId;
+  }
+  log(`Fixing addresses on ${so || id}…`);
+  const r = await fixOrderAddresses(page, id, so);
+  log('');
+  log('  result   : ' + r.action.toUpperCase() + (r.reason ? ' — ' + r.reason : ''));
+  if (r.facility) log('  facility : ' + r.facility + '  (labour ' + r.abbr + ')');
+  if (r.before) {
+    log('  bill to  : ' + JSON.stringify(r.before.billTo) + '  ->  ' + JSON.stringify(r.after.billTo));
+    log('  ship to  : ' + JSON.stringify(r.before.shipTo) + '  ->  ' + JSON.stringify(r.after.shipTo));
+  }
+  if (r.failed && r.failed.length) r.failed.forEach((f) => log('  FAILED   : ' + f));
+  if (r.verified !== undefined) log('  verified : ' + r.verified);
+}
+
+async function runAddrModalProbe(page, context) {
+  const out = [];
+  const say = (s = '') => { log(s); out.push(s); };
+  const finish = () => fs.writeFileSync(dataPath('addr-modal.txt'), out.join('\n'), 'utf8');
+
+  if (!(await ensureListLoaded(page))) { say('Not signed into Fullbay — aborting.'); finish(); return; }
+  let id = (process.argv[3] || '').trim();
+  const looksLikeSo = /^so-?\d+$/i.test(id) || /^\d{1,6}$/.test(id);
+  if (looksLikeSo) {
+    await showAllRows(page);
+    const rows = await readListRows(page);
+    const want = id.replace(/^so-?/i, '');
+    const hit = rows.find((r) => String(r.soNumber || '').replace(/^so-?/i, '') === want && r.repairOrderId);
+    if (!hit) { say(`SO ${id} not in the Ready-to-Invoice list.`); finish(); return; }
+    id = hit.repairOrderId;
+    say(`SO ${hit.soNumber} -> repairOrderId ${id}`);
+  }
+
+  await page.goto(`${CONFIG.baseUrl}/office/workorder/approveRepairOrderQuote.html?repairOrderId=${id}`,
+    { waitUntil: 'domcontentloaded' });
+  await sleep(4000);
+  say('estimate url: ' + page.url());
+
+  // Click the pencil beside "Bill to address" (never the Add Address button).
+  const opened = await page.evaluate(() => {
+    const el = document.getElementById('billingDisplayAddress');
+    if (!el) return 'no billingDisplayAddress field';
+    const grp = el.closest('.input-group');
+    const pencil = grp && grp.querySelector('span[onclick*="openFindAddressModal"]');
+    if (!pencil) return 'no pencil control found';
+    pencil.click();
+    return 'clicked';
   });
-  page.on('response', (resp) => {
-    const u = resp.url();
-    if (/datapoint=completedHours|completedHours|generateReport|runReport/i.test(u)) reqs.push('  <-RESP ' + resp.status() + ' ' + u);
-  });
-
-  const dump = [];
-  const line = (s) => dump.push(s);
-
-  await page.goto(CONFIG.baseUrl + '/office/configuration/indexReports.html', { waitUntil: 'domcontentloaded' }).catch(() => {});
-  await sleep(1500);
-
-  // Open the Completed Hours modal via its data-modal button.
-  const clicked = await page.evaluate(() => {
-    const b = [...document.querySelectorAll('button[data-modal],a[data-modal]')]
-      .find((x) => /datapoint=completedHours/i.test(x.getAttribute('data-modal') || ''));
-    if (b) { b.click(); return b.getAttribute('data-modal'); }
-    return null;
-  }).catch(() => null);
-  line('Clicked Completed Hours data-modal: ' + clicked);
-  await sleep(2800);
-
-  const modalInfo = () => page.evaluate(() => {
-    const clip = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
-    const modal = document.querySelector('.modal.in, .modal.show, .modal[style*="display: block"], .modal-dialog');
-    const scope = modal || document;
-    const inputs = [...scope.querySelectorAll('input,select,textarea')].map((el) => ({
-      tag: el.tagName.toLowerCase(), type: el.type || '', name: el.name || '', id: el.id || '',
-      value: clip(el.value, 40),
-      options: el.tagName === 'SELECT' ? [...el.options].slice(0, 10).map((o) => clip(o.textContent, 24) + '=' + o.value) : undefined,
-    })).filter((i) => i.name || i.id);
-    const buttons = [...scope.querySelectorAll('button,a.btn,input[type=submit]')].map((b) => ({
-      text: clip(b.textContent || b.value, 24), onclick: clip(b.getAttribute('onclick'), 80), id: b.id || '',
-    })).filter((b) => b.text);
-    return { html: clip((modal || {}).outerHTML, 60), inputs, buttons };
-  });
-
-  let m = await modalInfo().catch(() => null);
-  line('\n=== Completed Hours modal — form controls ===');
-  if (m) {
-    m.inputs.forEach((i) => line('  [' + i.tag + (i.type ? ':' + i.type : '') + '] name=' + i.name + ' id=' + i.id + (i.value ? ' value=' + i.value : '') + (i.options ? ' options=' + i.options.join(', ') : '')));
-    line('  buttons: ' + m.buttons.map((b) => b.text + (b.id ? '#' + b.id : '') + (b.onclick ? ' onclick=' + b.onclick : '')).join('  |  '));
-  } else { line('  (no modal found)'); }
-
-  // Fill any date inputs with a known full week (Mon 5/18 – Sun 5/24, 2026) and run it.
-  const filled = await page.evaluate(() => {
-    const modal = document.querySelector('.modal.in, .modal.show, .modal[style*="display: block"], .modal-dialog') || document;
-    const dates = [...modal.querySelectorAll('input')].filter((el) => /date/i.test(el.id + ' ' + el.name) || /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(el.value || ''));
-    const vals = ['5/18/2026', '5/24/2026'];
-    dates.forEach((el, i) => { el.value = vals[Math.min(i, 1)]; el.dispatchEvent(new Event('change', { bubbles: true })); });
-    const go = [...modal.querySelectorAll('button,a.btn,input[type=submit]')].find((b) => /^(go|run|generate|view|submit)\b/i.test((b.textContent || b.value || '').trim()));
-    if (go) go.click();
-    return { dateFieldsFilled: dates.map((d) => d.id || d.name), clickedGo: !!go };
-  }).catch(() => ({}));
-  line('\nFilled date fields: ' + JSON.stringify(filled));
+  say('open picker: ' + opened);
   await sleep(4000);
 
-  // Capture the resulting report table.
-  const result = await page.evaluate(() => {
-    const clip = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
-    const tables = [...document.querySelectorAll('table')].map((t) => ({
-      id: t.id || '', cls: clip(t.className, 40),
-      headers: [...t.querySelectorAll('thead th, tr:first-child th, tr:first-child td')].map((th) => clip(th.textContent, 22)).slice(0, 14),
-      rowCount: t.querySelectorAll('tbody tr').length,
-      rows: [...t.querySelectorAll('tbody tr')].slice(0, 6).map((tr) => [...tr.querySelectorAll('td,th')].map((td) => clip(td.textContent, 22)).slice(0, 14)),
-    })).filter((t) => t.headers.length && (t.rowCount > 0 || /hour|tech|employee|name/i.test(t.headers.join(' '))));
-    return tables;
-  }).catch(() => []);
-  line('\n=== Result tables (after Go) ===');
-  result.forEach((t, n) => {
-    line('  table#' + n + ' id=' + t.id + ' class=' + t.cls + ' rows=' + t.rowCount);
-    line('    headers: ' + t.headers.join(' | '));
-    t.rows.forEach((r) => line('    row: ' + r.join(' | ')));
+  const modal = await page.evaluate(() => {
+    const ZW = /[​-‍﻿­]/g;
+    const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+    const vis = (el) => !!(el.offsetParent || el.getClientRects().length);
+    const panel = Array.from(document.querySelectorAll('.modal, [role="dialog"]')).filter(vis)[0];
+    if (!panel) return null;
+    // Rows a person would click to choose an address.
+    const rows = Array.from(panel.querySelectorAll('tr, li, .list-group-item, [onclick]'))
+      .filter((el) => el.children.length <= 6)
+      .map((el) => ({ text: clean(el.textContent).slice(0, 160), onclick: (el.getAttribute('onclick') || '').slice(0, 200) }))
+      .filter((r) => r.text);
+    const seen = new Set();
+    return {
+      title: clean((panel.querySelector('.modal-title') || {}).textContent || ''),
+      rows: rows.filter((r) => { if (seen.has(r.text)) return false; seen.add(r.text); return true; }).slice(0, 40),
+      html: clean(panel.outerHTML).slice(0, 2500),
+    };
   });
 
-  line('\n=== Network requests seen (report-related) ===');
-  [...new Set(reqs)].slice(0, 40).forEach((r) => line('  ' + r));
-
-  fs.writeFileSync(path.join(__dirname, 'fullbay-completedhours-probe.txt'), dump.join('\n'), 'utf8');
-  log('Wrote fullbay-completedhours-probe.txt');
-  await sleep(1200);
-}
-
-/* ----------------------------------------------------------------------------
- * Fullbay "Completed Hours" report = billed (invoiced) hours per employee.
- * Parse the #reportTable into { weeks:[Mon-ISO], byEmployee:[{name,weekHours,total}] }.
- * -------------------------------------------------------------------------- */
-function parseCompletedHoursTable(html) {
-  const tblM = html.match(/<table[^>]*id="reportTable"[\s\S]*?<\/table>/i);
-  if (!tblM) return null;
-  const tbl = tblM[0];
-  const clean = (s) => s.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
-
-  const head = tbl.match(/<thead>[\s\S]*?<\/thead>/i);
-  const ths = head ? [...head[0].matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)].map((m) => clean(m[1])) : [];
-  // Map each header column to a Monday-ISO key (date-range headers) or a role.
-  const colKey = ths.map((t) => {
-    const dm = t.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    if (dm) return mondayISO(new Date(+dm[3], +dm[1] - 1, +dm[2]));
-    if (/^total$/i.test(t)) return '__total';
-    if (/^average$/i.test(t)) return '__avg';
-    if (/employee/i.test(t)) return '__name';
-    return null;
-  });
-
-  const body = tbl.match(/<tbody>[\s\S]*?<\/tbody>/i);
-  const trs = body ? [...body[0].matchAll(/<tr>([\s\S]*?)<\/tr>/gi)] : [];
-  const byEmployee = [];
-  trs.forEach((tr) => {
-    const tds = [...tr[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => clean(m[1]));
-    if (!tds.length) return;
-    let name = ''; let total = null; const weekHours = {};
-    tds.forEach((cell, i) => {
-      const key = colKey[i];
-      if (key === '__name' || (i === 0 && !key)) { name = cell; return; }
-      if (key === '__total') { total = parseFloat(cell); return; }
-      if (key && key.indexOf('__') !== 0) { const v = parseFloat(cell); if (!isNaN(v)) weekHours[key] = v; }
-    });
-    if (!name) name = tds[0];
-    if (total == null) total = Object.values(weekHours).reduce((a, b) => a + b, 0);
-    byEmployee.push({ name, weekHours, total: +(+total).toFixed(2) });
-  });
-  const weeks = colKey.filter((k) => k && k.indexOf('__') !== 0);
-  return { weeks, byEmployee };
-}
-
-// M/D/YYYY (no leading zeros) — the date format Fullbay's report expects.
-function mdy(d) { return (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear(); }
-
-// Fetch the Completed Hours report for a date range (Weekly buckets) and return parsed data.
-async function fetchCompletedHours(page, context, startMDY, endMDY, columnFormat) {
-  const base = CONFIG.baseUrl;
-  // Open the modal so its employee <select> populates, then read employee + location ids.
-  await page.goto(base + '/office/configuration/indexReports.html', { waitUntil: 'domcontentloaded' }).catch(() => {});
-  await sleep(1400);
-  await page.evaluate(() => {
-    const b = [...document.querySelectorAll('button[data-modal],a[data-modal]')]
-      .find((x) => /datapoint=completedHours/i.test(x.getAttribute('data-modal') || ''));
-    if (b) b.click();
-  }).catch(() => {});
-  await sleep(3200);
-  let emps = await page.evaluate(() => {
-    const sel = document.querySelector('#viewReportModalEntityEmployeeIds');
-    return sel ? [...sel.options].map((o) => ({ id: o.value, name: (o.textContent || '').trim() })).filter((e) => e.id) : [];
-  }).catch(() => []);
-  let locs = await page.evaluate(() => {
-    const sel = document.querySelector('#viewReportModalEntityLocationIds');
-    return sel ? [...sel.options].map((o) => o.value).filter(Boolean) : [];
-  }).catch(() => []);
-  // Fallback to the last-known employee list if the modal didn't populate.
-  if (!emps.length) {
-    try { emps = JSON.parse(fs.readFileSync(path.join(__dirname, 'fb-ch-employees.json'), 'utf8')); } catch (e) { /* ignore */ }
+  if (!modal) say('no visible modal appeared');
+  else {
+    say('');
+    say('modal title: ' + modal.title);
+    say('');
+    say('=== CHOOSABLE ROWS ===');
+    modal.rows.forEach((r) => { say('  ' + r.text); if (r.onclick) say('      onclick=' + r.onclick); });
+    say('');
+    say('=== MODAL HTML (truncated) ===');
+    say('  ' + modal.html);
   }
-  if (!locs.length) locs = ['9086'];
-
-  const params = new URLSearchParams();
-  params.append('datapoint', 'completedHours');
-  params.append('reportTitle', 'Completed Hours');
-  params.append('dateRange', '');
-  params.append('startDate', startMDY);
-  params.append('endDate', endMDY);
-  locs.forEach((l) => params.append('entityLocationIds[]', l));
-  emps.forEach((e) => params.append('entityEmployeeIds[]', e.id));
-  params.append('typeOfEntityEmployees', 'Active');
-  params.append('columnFormat', columnFormat || 'Weekly');
-
-  const rep = await context.request.post(base + '/office/configuration/viewReport.html', {
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    data: params.toString(),
-  });
-  const html = await rep.text();
-  const parsed = parseCompletedHoursTable(html);
-  return { ok: rep.status() === 200 && !!parsed, status: rep.status(), employees: emps.length, parsed };
-}
-
-// MODE=billed — fetch recent weeks of completed hours and write the JSON the scorecard reads.
-async function runBilledFetch(page, context) {
-  if (!(await ensureListLoaded(page))) { log('Not signed into Fullbay — aborting.'); return; }
-  const today = new Date();
-  const startD = new Date(today); startD.setDate(startD.getDate() - 7 * 11); // ~12 weeks back
-  // snap start to its Monday
-  startD.setDate(startD.getDate() - ((startD.getDay() + 6) % 7));
-  log('Fetching Completed Hours ' + mdy(startD) + ' → ' + mdy(today) + ' (Weekly)…');
-  const r = await fetchCompletedHours(page, context, mdy(startD), mdy(today), 'Weekly');
-  if (!r.ok || !r.parsed) { log('Failed (HTTP ' + r.status + ', employees ' + r.employees + ', parsed ' + !!r.parsed + ').'); return; }
-  const out = {
-    updatedAt: new Date().toISOString(),
-    source: 'fullbay-completed-hours',
-    rangeStart: mdy(startD), rangeEnd: mdy(today),
-    weeks: r.parsed.weeks,
-    byEmployee: r.parsed.byEmployee,
-  };
-  fs.writeFileSync(path.join(__dirname, 'fullbay-completed-hours.json'), JSON.stringify(out, null, 2), 'utf8');
-  const nonZero = r.parsed.byEmployee.filter((e) => e.total > 0).length;
-  log('Wrote fullbay-completed-hours.json — ' + r.parsed.weeks.length + ' weeks, ' + r.parsed.byEmployee.length + ' employees (' + nonZero + ' with hours).');
-  await sleep(600);
-}
-
-/* ----------------------------------------------------------------------------
- * chdata2: opens the modal in-page so JS populates the employee list, reads
- * all employee ids, then (a) direct-POSTs viewReport.html with them and (b)
- * clicks Go and dumps the rendered report — so we can see where the data lives.
- * -------------------------------------------------------------------------- */
-async function runChData2Probe(page, context) {
-  if (!(await ensureListLoaded(page))) { log('Not signed into Fullbay — aborting.'); return; }
-  const base = CONFIG.baseUrl;
-  await page.goto(base + '/office/configuration/indexReports.html', { waitUntil: 'domcontentloaded' }).catch(() => {});
-  await sleep(1500);
-
-  // Open the Completed Hours modal so its employee <select> populates.
-  await page.evaluate(() => {
-    const b = [...document.querySelectorAll('button[data-modal],a[data-modal]')]
-      .find((x) => /datapoint=completedHours/i.test(x.getAttribute('data-modal') || ''));
-    if (b) b.click();
-  }).catch(() => {});
-  await sleep(3500);
-
-  const emps = await page.evaluate(() => {
-    const sel = document.querySelector('#viewReportModalEntityEmployeeIds');
-    return sel ? [...sel.options].map((o) => ({ id: o.value, name: (o.textContent || '').trim() })).filter((e) => e.id) : [];
-  }).catch(() => []);
-  const locs = await page.evaluate(() => {
-    const sel = document.querySelector('#viewReportModalEntityLocationIds');
-    return sel ? [...sel.options].map((o) => o.value).filter(Boolean) : ['9086'];
-  }).catch(() => ['9086']);
-  log('Employees from live modal: ' + emps.length + '; locations: ' + locs.join(','));
-  fs.writeFileSync(path.join(__dirname, 'fb-ch-employees.json'), JSON.stringify(emps, null, 2), 'utf8');
-
-  // (a) Direct POST with all employees, weekly buckets, wide range.
-  const params = new URLSearchParams();
-  params.append('datapoint', 'completedHours');
-  params.append('reportTitle', 'Completed Hours');
-  params.append('dateRange', '');
-  params.append('startDate', '4/20/2026');
-  params.append('endDate', '5/31/2026');
-  locs.forEach((l) => params.append('entityLocationIds[]', l));
-  emps.forEach((e) => params.append('entityEmployeeIds[]', e.id));
-  params.append('typeOfEntityEmployees', 'Active');
-  params.append('columnFormat', 'Weekly');
-  const rep = await context.request.post(base + '/office/configuration/viewReport.html', {
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    data: params.toString(),
-  });
-  const repHtml = await rep.text();
-  fs.writeFileSync(path.join(__dirname, 'fb-ch-report.html'), repHtml, 'utf8');
-  log('Direct POST -> HTTP ' + rep.status() + ', ' + repHtml.length + ' bytes');
-
-  // (b) Drive the UI: set fields, click Go, dump the rendered report container.
-  await page.evaluate(() => {
-    const sd = document.querySelector('#viewReportModalStartDate'); if (sd) { sd.value = '4/20/2026'; sd.dispatchEvent(new Event('change', { bubbles: true })); }
-    const ed = document.querySelector('#viewReportModalEndDate'); if (ed) { ed.value = '5/31/2026'; ed.dispatchEvent(new Event('change', { bubbles: true })); }
-    const cf = document.querySelector('#viewReportModalColumnFormat'); if (cf) { cf.value = 'Weekly'; cf.dispatchEvent(new Event('change', { bubbles: true })); }
-    const sel = document.querySelector('#viewReportModalEntityEmployeeIds'); if (sel) { [...sel.options].forEach((o) => { o.selected = true; }); sel.dispatchEvent(new Event('change', { bubbles: true })); }
-    if (typeof viewReportModalSubmitReport === 'function') viewReportModalSubmitReport();
-    else { const go = document.querySelector('#btnSubmit'); if (go) go.click(); }
-  }).catch(() => {});
-  await sleep(6000);
-  const rendered = await page.evaluate(() => {
-    const clip = (s, n) => (s || '').slice(0, n);
-    const tgt = document.querySelector('#viewReportResults, .report-results, #reportResults, .modal.in .modal-body, .modal.show .modal-body');
-    return tgt ? clip(tgt.outerHTML, 120000) : clip(document.body.innerHTML, 120000);
-  }).catch(() => '');
-  fs.writeFileSync(path.join(__dirname, 'fb-ch-rendered.html'), rendered, 'utf8');
-  log('Rendered report dumped -> fb-ch-rendered.html (' + rendered.length + ' bytes)');
-  await sleep(800);
-}
-
-/* ----------------------------------------------------------------------------
- * Completed-hours DATA fetch (MODE=chdata). Replays the report's POST via the
- * authenticated context and saves the raw HTML so we can build the parser.
- * -------------------------------------------------------------------------- */
-async function runChDataProbe(page, context) {
-  if (!(await ensureListLoaded(page))) { log('Not signed into Fullbay — aborting.'); return; }
-  const base = CONFIG.baseUrl;
-
-  // 1) Get the modal HTML to read the full employee <select> (id + name).
-  const modalResp = await context.request.post(base + '/office/configuration/viewReportModal.html', {
-    form: { datapoint: 'completedHours', reportTitle: 'Completed Hours' },
-  });
-  const modalHtml = await modalResp.text();
-  fs.writeFileSync(path.join(__dirname, 'fb-ch-modal.html'), modalHtml, 'utf8');
-
-  // Parse employee options inside the employee select.
-  let empIds = [];
-  const selM = modalHtml.match(/id="viewReportModalEntityEmployeeIds"[\s\S]*?<\/select>/i);
-  if (selM) {
-    empIds = [...selM[0].matchAll(/<option[^>]*value="(\d+)"[^>]*>([^<]+)</g)].map((m) => ({ id: m[1], name: m[2].trim() }));
-  }
-  log('Employees parsed: ' + empIds.length);
-
-  // 2) POST the report for a wide range, weekly buckets.
-  const params = new URLSearchParams();
-  params.append('datapoint', 'completedHours');
-  params.append('reportTitle', 'Completed Hours');
-  params.append('dateRange', '');
-  params.append('startDate', '4/20/2026');
-  params.append('endDate', '5/31/2026');
-  params.append('entityLocationIds[]', '9086');
-  empIds.forEach((e) => params.append('entityEmployeeIds[]', e.id));
-  params.append('typeOfEntityEmployees', 'Active');
-  params.append('columnFormat', 'Weekly');
-
-  const rep = await context.request.post(base + '/office/configuration/viewReport.html', {
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    data: params.toString(),
-  });
-  const repHtml = await rep.text();
-  fs.writeFileSync(path.join(__dirname, 'fb-ch-report.html'), repHtml, 'utf8');
-  log('Report HTTP ' + rep.status() + ', ' + repHtml.length + ' bytes -> fb-ch-report.html');
-  await sleep(800);
+  finish();
+  log('\nWrote addr-modal.txt');
 }
 
 /* ----------------------------------------------------------------------------
  * Entry point.
  * -------------------------------------------------------------------------- */
 // Allow requiring this file (e.g. for offline parser tests) without launching a browser.
-if (require.main !== module) { module.exports = { parseCompletedHoursTable, mondayISO, mdy, loadSheetCompletionMap, extractTabCompletion, buildMapFromTabs }; }
+if (require.main !== module) { module.exports = { loadSheetCompletionMap, extractTabCompletion, buildMapFromTabs, writeJson, writeCsv, writeHtml }; }
 
 if (require.main === module) (async () => {
   // Open the Vorto portal so a person can sign in (session saved to .vorto-profile).
@@ -1893,7 +2763,7 @@ if (require.main === module) (async () => {
   // real saved session is never touched.
   if (MODE === 'logintest') {
     if (!readFullbayCreds()) { log('No valid credentials in fullbay-credentials.json (still has placeholders?).'); return; }
-    const dir = path.join(__dirname, '.fb-logintest');
+    const dir = dataPath('.fb-logintest');
     fs.rmSync(dir, { recursive: true, force: true });
     const ctx = await chromium.launchPersistentContext(dir, { headless: false, viewport: null, args: ['--start-maximized'] });
     const pg = ctx.pages()[0] || (await ctx.newPage());
@@ -1917,11 +2787,26 @@ if (require.main === module) (async () => {
     return;
   }
 
-  const context = await chromium.launchPersistentContext(PROFILE_DIR, {
+  // A run that was force-killed can leave its Chromium alive holding this
+  // profile; the next launch then attaches to that dead session and shows an
+  // empty about:blank window. Handle that REACTIVELY — try to launch, and only
+  // clear leftovers if Playwright actually reports the conflict. Killing
+  // pre-emptively on every run risks killing the browser this run depends on.
+  const launchOpts = {
     headless: !!CONFIG.headless,
     viewport: null,
     args: ['--start-maximized'],
-  });
+  };
+  let context;
+  try {
+    context = await chromium.launchPersistentContext(PROFILE_DIR, launchOpts);
+  } catch (e) {
+    if (!/existing browser session|already in use/i.test(e.message || '')) throw e;
+    log('  A leftover browser is holding the sign-in profile — clearing it…');
+    await releaseProfileLock(PROFILE_DIR);
+    await sleep(2500);
+    context = await chromium.launchPersistentContext(PROFILE_DIR, launchOpts);
+  }
   const page = context.pages()[0] || (await context.newPage());
   try {
     if (MODE === 'probe') await runProbe(page, context);
@@ -1931,19 +2816,35 @@ if (require.main === module) (async () => {
     else if (MODE === 'imgapi') await runImgApiProbe(page, context);
     else if (MODE === 'sheet') await runSheetProbe(page, context);
     else if (MODE === 'notes') await runNotesProbe(page, context);
-    else if (MODE === 'reports') await runReportsProbe(page, context);
-    else if (MODE === 'completedhours') await runCompletedHoursProbe(page, context);
-    else if (MODE === 'chdata') await runChDataProbe(page, context);
-    else if (MODE === 'chdata2') await runChData2Probe(page, context);
-    else if (MODE === 'billed') await runBilledFetch(page, context);
+    else if (MODE === 'estimate') await runEstimateProbe(page, context);
+    else if (MODE === 'parts') await runPartsProbe(page, context);
+    else if (MODE === 'opensos') await runOpenSosProbe(page, context);
+    else if (MODE === 'open') await runOpenOnly(page, context);
+    else if (MODE === 'addrmodal') await runAddrModalProbe(page, context);
+    else if (MODE === 'fixaddr') await runFixAddr(page, context);
+    else if (MODE === 'fixaddresses') await runFixAddresses(page, context);
     else if (MODE === 'login') {
-      // Open Fullbay and wait for the user to sign in (session is saved in the profile).
-      const ok = await ensureListLoaded(page);
+      // A person is signing in on purpose: never auto-fill (it breaks the SSO
+      // screen), and give them 15 minutes to get through Microsoft.
+      log('Opening Fullbay. Sign in in the browser window — including "Continue with Microsoft".');
+      const ok = await ensureListLoaded(page, { autoLogin: false, waitMinutes: 15 });
       log(ok ? '\nFullbay connected — audits can be run now.' : '\nSign-in was not completed.');
       await sleep(1500);
-    } else await runFull(page, context);
+    } else if (MODE === 'full' || MODE === 'audit') {
+      await runFull(page, context);
+    } else {
+      // Refuse anything we don't recognise. This used to fall through to a full
+      // audit, so a stale or mistyped mode — the portal agent still knows about
+      // the removed "billed" mode, for instance — would quietly run a complete
+      // audit against Fullbay and overwrite the report nobody asked to replace.
+      log(`\nUnknown mode "${MODE}". Nothing was run.`);
+      log('Valid modes: (none)=full audit, open, login, fixaddresses, fixaddr,');
+      log('  probe, estimate, parts, opensos, addrmodal, photos, viewer, sheet, notes.');
+      process.exitCode = 2;
+    }
   } catch (e) {
     log('\nFATAL: ' + e.message);
+    process.exitCode = 1;
   } finally {
     await context.close();
   }

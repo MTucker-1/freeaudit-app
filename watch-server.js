@@ -14,7 +14,7 @@ const ROOT = __dirname;
 // Files loaded into the web-server process. A change to any of these needs a
 // restart. (audit.js / checks.js run as separate child processes per audit, so
 // they pick up changes on the next run without restarting the web server.)
-const WATCH = ['server.js', 'connecteam.js'];
+const WATCH = ['server.js'];
 
 let child = null;
 let restarting = false;

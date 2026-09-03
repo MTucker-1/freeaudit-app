@@ -40,6 +40,7 @@
     background-attachment:fixed}
   button{font-family:inherit;cursor:pointer}
   .hidden{display:none!important}
+  .hint{font-size:12px;color:var(--faint);margin-top:6px;line-height:1.5}
   h1,h2,h3{letter-spacing:-.023em}
   ::selection{background:var(--red);color:#fff}
   :focus-visible{outline:none;box-shadow:var(--ring);border-radius:10px}
@@ -149,11 +150,27 @@
     background:radial-gradient(900px 400px at 85% -40%, #1f4488 0%, var(--navy) 55%);border:0}
   .hero h1{font-size:30px;font-weight:800;margin:0 0 8px;letter-spacing:-.02em}
   .hero p{font-size:15px;color:#bcd0ee;margin:0 0 22px;max-width:560px;line-height:1.5}
-  .hero .controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-  .hero .runmsg{font-size:13px;color:#bcd0ee}
+  .hero .controls{display:flex;flex-wrap:wrap;gap:30px 40px;align-items:flex-start}
+  .cgroup{display:flex;flex-direction:column;gap:9px}
+  .clabel{font-size:10.5px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#8ea8cf}
+  .crow{display:flex;gap:12px;flex-wrap:wrap}
+  .btn-ghost{background:rgba(255,255,255,.10);color:#e8eefb;border:1px solid rgba(255,255,255,.22)}
+  .btn-ghost:hover:not(:disabled){background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.38)}
+  .btn-ghost:disabled{opacity:.4}
+  .signin-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding-top:4px}
+  .signin-note{font-size:12px;color:var(--faint);flex:1 1 240px}
+  .btn-sm2{font-size:12.5px;padding:8px 14px}
+  .hero .runmsg{font-size:13px;color:#bcd0ee;margin-top:22px;min-height:18px}
   .herohint{font-size:12.5px;color:#9fb4d6;margin:16px 0 0;max-width:600px;line-height:1.5}
   .herohint strong{color:#fff}
   .hero .btn{font-size:15px;padding:14px 24px}
+
+  /* First-run notice: shown until this copy has the logins it needs. */
+  .setup{background:#fff8e6;border:1px solid #f0d089;border-left:5px solid #eab308;border-radius:14px;padding:18px 20px;margin-bottom:18px}
+  .setup h3{margin:0 0 6px;font-size:16px;font-weight:800;color:#7c4a03}
+  .setup p{margin:0 0 10px;font-size:13.5px;color:#7a5a1e;line-height:1.55}
+  .setup ul{margin:0 0 12px;padding-left:20px;font-size:13.5px;color:#7a5a1e;line-height:1.7}
+  .setup .btn{font-size:13.5px;padding:9px 16px}
 
   .results{display:none;gap:14px;flex-wrap:wrap}
   .results.show{display:flex}
@@ -198,60 +215,6 @@
   .impact-big-l b{color:#fff}
   .impact-note{font-size:13px;color:var(--dim);margin:16px 0 0;line-height:1.6}
   .impact-note b{color:var(--navy)}
-  .score-table{width:100%;border-collapse:collapse;margin-top:6px}
-  .score-table th,.score-table td{padding:11px 12px;text-align:right;font-size:13px;border-bottom:1px solid var(--line)}
-  .score-table th:first-child,.score-table td:first-child{text-align:left}
-  .score-table thead th{font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--faint);border-bottom:2px solid var(--line)}
-  .score-table tbody tr:hover{background:var(--navy-soft)}
-  .score-table .who{font-weight:700;color:var(--navy)}
-  .score-table .tot{font-weight:800;color:var(--navy)}
-  .score-table .tot-col{background:#f6f8fc}
-  .score-rank{display:inline-flex;width:22px;height:22px;border-radius:50%;background:var(--navy-soft);color:var(--navy);
-    font-size:11px;font-weight:800;align-items:center;justify-content:center;margin-right:9px}
-  .score-rank.top{background:linear-gradient(135deg,var(--red-2),var(--red));color:#fff}
-  .score-foot{font-size:12px;color:var(--faint);margin:16px 0 0;line-height:1.6}
-  .score-foot b{color:var(--dim)}
-  .score-empty{padding:26px;text-align:center;color:var(--faint);font-size:14px}
-  .score-table .who{display:flex;align-items:center;gap:10px}
-  .score-table .who-name{display:flex;flex-direction:column;line-height:1.2}
-  .score-table .who-title{font-weight:600;font-size:11px;color:var(--faint);margin-top:1px}
-  .score-rank{flex:none}
-  .score-wide{font-variant-numeric:tabular-nums}
-  #scoreBody{overflow-x:auto}
-  .score-controls{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:14px 0 4px}
-  .score-date{font-size:12px;font-weight:600;color:var(--dim);display:inline-flex;align-items:center;gap:6px}
-  .score-date input{font-family:inherit;font-size:13px;font-weight:600;color:var(--navy);border:1.5px solid var(--line);
-    border-radius:10px;padding:7px 10px;background:#fff;transition:border-color .2s}
-  .score-date input:hover{border-color:var(--faint)}
-  .btn-sm{padding:8px 16px;font-size:13px}
-  .seg{display:inline-flex;background:var(--navy-soft);border-radius:11px;padding:3px}
-  .seg-btn{border:0;background:transparent;color:var(--dim);font-weight:700;font-size:13px;padding:7px 15px;border-radius:8px;
-    cursor:pointer;transition:.18s}
-  .seg-btn.active{background:#fff;color:var(--navy);box-shadow:0 1px 4px rgba(11,35,65,.14)}
-  .score-quick{display:inline-flex;gap:6px;margin-left:auto;flex-wrap:wrap}
-  .chip-btn{border:1.5px solid var(--line);background:#fff;color:var(--dim);font-weight:600;font-size:12px;
-    padding:6px 11px;border-radius:999px;cursor:pointer;transition:.18s}
-  .chip-btn:hover{border-color:var(--navy-2);color:var(--navy)}
-  .chip-refresh{border-color:var(--red);color:var(--red);font-weight:700}
-  .chip-refresh:hover{background:var(--red-soft);border-color:var(--red)}
-  .chip-refresh:disabled{opacity:.6;cursor:default}
-  .eff{display:inline-block;min-width:46px;padding:3px 9px;border-radius:999px;font-weight:800;font-size:12px}
-  .eff-hi{background:var(--ok-soft);color:var(--ok)}
-  .eff-mid{background:#fef3c7;color:#a16207}
-  .eff-lo{background:var(--red-soft);color:var(--red-dark)}
-  .score-team{display:flex;align-items:center;gap:18px;margin:8px 0 16px;padding:18px 22px;border-radius:16px;
-    background:linear-gradient(135deg,var(--navy-2),var(--navy));color:#fff;box-shadow:var(--shadow-md)}
-  .score-team .st-eff{font-size:42px;font-weight:900;line-height:1;letter-spacing:-.03em;
-    padding:8px 16px;border-radius:13px;background:rgba(255,255,255,.12)}
-  .score-team .st-eff.eff-hi{color:#86efac;background:rgba(134,239,172,.14)}
-  .score-team .st-eff.eff-mid{color:#fde047;background:rgba(253,224,71,.14)}
-  .score-team .st-eff.eff-lo{color:#fca5a5;background:rgba(252,165,165,.16)}
-  .score-team .st-eff.st-plain{color:#fff}
-  .score-team .st-label{font-size:15px;font-weight:800;letter-spacing:-.01em}
-  .score-team .st-sub{font-size:12.5px;color:#c3d4ee;margin-top:3px;font-weight:600}
-  .score-table tfoot .team-row td{border-top:2px solid var(--navy);border-bottom:0;background:var(--navy-soft);font-weight:800;padding-top:13px;padding-bottom:13px}
-  .score-table tfoot .team-row .tot-col{background:#e7eef9}
-  .team-rank{background:var(--navy)!important;color:#fff!important}
   .chart-block{margin-top:18px}
   .chart-title{font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);margin-bottom:12px}
   .bar-row{display:grid;grid-template-columns:118px 1fr auto;align-items:center;gap:12px;margin-bottom:11px}
@@ -286,6 +249,49 @@
     padding:7px 13px;border-radius:9px;display:inline-flex;align-items:center;gap:6px;text-decoration:none}
   .sec-head .tool:hover{background:#e1e9f6}
   .sec-head .tool svg{width:14px;height:14px}
+  .prog-idle{margin:4px 22px 6px;font-size:13px;color:var(--faint)}
+  .score-controls{display:flex;align-items:center;gap:14px;margin:12px 0 6px;flex-wrap:wrap}
+  .score-range{font-size:12.5px;font-weight:700;color:var(--dim);display:inline-flex;align-items:center;gap:8px}
+  .score-range select{font:inherit;font-size:13px;padding:6px 10px;border:1.5px solid var(--line);border-radius:9px;background:#fff;color:var(--navy)}
+  .score-meta{font-size:12px;color:var(--faint)}
+  .sc-table{width:100%;border-collapse:collapse;margin-top:8px}
+  .sc-table th,.sc-table td{padding:13px 14px;font-size:13px;border-bottom:1px solid var(--line);text-align:right;vertical-align:middle}
+  .sc-table th:first-child,.sc-table td:first-child{text-align:left}
+  .sc-table thead th{font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--faint)}
+  .sc-row{cursor:pointer;transition:background .12s}
+  .sc-row:hover{background:var(--navy-soft)}
+  .sc-name{font-weight:700;color:var(--navy)}
+  .sc-rate{display:inline-block;min-width:44px;padding:3px 9px;border-radius:999px;font-weight:800;font-size:12px}
+  .sc-hi{background:var(--red-soft);color:var(--red-dark)}
+  .sc-mid{background:#fef3c7;color:#a16207}
+  .sc-lo{background:var(--ok-soft);color:var(--ok)}
+  .sc-chips{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+  .sc-chip{font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;background:var(--navy-soft);color:var(--navy);white-space:nowrap}
+  .sc-empty{padding:26px;text-align:center;color:var(--faint);font-size:14px}
+  .sc-back{border:0;background:none;color:var(--navy-2);font-weight:700;font-size:13px;cursor:pointer;padding:0;margin-bottom:10px}
+  .sc-sec{font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin:26px 0 6px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  /* One block per check: title + count, its own full-width bar, then the
+     names on a line of their own. The previous version crammed all three onto
+     one grid row with a hard-coded indent. */
+  .sc-miss{padding:15px 0;border-bottom:1px solid var(--line)}
+  .sc-miss:last-child{border-bottom:0}
+  .sc-miss-head{display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-bottom:9px}
+  .sc-miss-name{font-size:14px;font-weight:700;color:var(--navy);letter-spacing:-.01em}
+  .sc-miss-count{font-size:15px;font-weight:800;color:var(--navy);font-variant-numeric:tabular-nums}
+  .sc-track{height:8px;border-radius:5px;background:var(--navy-soft);overflow:hidden}
+  .sc-track i{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,var(--navy-2),var(--red))}
+  .sc-who-row{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:11px}
+  .sc-who{font-size:12px;color:var(--faint);white-space:nowrap}
+  .sc-who b{font-weight:600;color:var(--dim)}
+  .sc-more{background:transparent;color:var(--faint);border:1px solid var(--line)}
+  .sc-week{display:grid;grid-template-columns:120px 1fr 70px;align-items:center;gap:14px;margin-bottom:10px;font-size:12.5px}
+  .sc-week-lbl{font-size:12px;color:var(--faint);font-weight:600}
+  .sc-week b{font-variant-numeric:tabular-nums;font-weight:700;color:var(--navy);text-align:right}
+  .logdetail{margin:12px 22px 18px}
+  .logdetail summary{cursor:pointer;font-size:12.5px;font-weight:700;color:var(--dim);user-select:none}
+  .logdetail summary:hover{color:var(--navy)}
+  .console{margin-top:10px;background:var(--navy-dark);color:#cfe0f5;font-family:Consolas,monospace;
+    font-size:12px;border-radius:10px;padding:14px 16px;max-height:260px;overflow:auto;white-space:pre-wrap;line-height:1.55}
   .progwrap{margin:16px 22px 0}
   .progtrack{height:16px;background:#e6eaf1;border-radius:9px;overflow:hidden;position:relative}
   .progfill{height:100%;width:0;border-radius:9px;background:linear-gradient(90deg,var(--navy-2),var(--red));
@@ -295,10 +301,6 @@
   @keyframes shimmer{0%{background-position:0% 0}100%{background-position:-200% 0}}
   .proglabel{font-size:13px;font-weight:700;color:var(--navy);margin-top:8px;display:flex;align-items:center;gap:8px}
   .proglabel::before{content:'';width:9px;height:9px;border-radius:50%;background:var(--red);animation:pulse 1.2s infinite}
-  .console{margin:14px 22px 22px;background:var(--navy-dark);color:#cfe0f5;font-family:'SF Mono',Consolas,monospace;
-    font-size:12.5px;border-radius:12px;padding:18px 20px;height:300px;overflow:auto;white-space:pre-wrap;line-height:1.6;
-    box-shadow:inset 0 2px 12px rgba(0,0,0,.35)}
-  .console .dim{color:#7f93b3}
   .report-frame{margin:18px;border-radius:14px;overflow:hidden;border:1px solid var(--line);
     box-shadow:0 12px 34px rgba(11,35,65,.14);background:#fff;position:relative}
   iframe{width:100%;height:620px;border:0;background:#fff;display:block}
@@ -408,7 +410,7 @@
         <button id="openAbout" class="topnav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> About</button>
         <button id="openHow" class="topnav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/></svg> How it works</button>
         <button id="openImpact" class="topnav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> Impact</button>
-        <button id="openScore" class="topnav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg> Scorecard</button>
+        <button id="openScore" class="topnav-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg> Scorecard</button>
       </div>
       <div class="tb-center">
         <img class="tb-logo" src="/logo.png" alt="Freedom Logistics Service Solutions logo">
@@ -440,20 +442,33 @@
         <div class="dash-grid" id="dashGrid"></div>
       </section>
 
+      <div id="setupBanner" class="setup hidden"></div>
+
       <section class="card hero">
         <h1>Ready-to-Invoice Audit</h1>
         <p>One click checks every Ready-to-Invoice order in Fullbay for photos, parts, inspections, hours, PO numbers, duplicate photos, and the completion tracker — then builds a full report.</p>
         <div class="controls">
-          <button id="run" class="btn btn-red"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Run Audit</button>
-          <button id="connect" class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Sign in to Fullbay</button>
-          <button id="connectVorto" class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Sign in to Vorto</button>
-          <button id="stop" class="btn hidden"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> Stop</button>
-          <button id="view" class="btn btn-navy" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> View Report</button>
-          <a id="csv" class="btn" href="/report-csv" download><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> CSV</a>
-          <button id="pdf" class="btn" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> <span id="pdfLabel">PDF</span></button>
-          <span id="runmsg" class="runmsg"></span>
+          <div class="cgroup">
+            <div class="clabel">Run</div>
+            <div class="crow">
+              <button id="run" class="btn btn-red"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Run Audit</button>
+              <button id="runOpen" class="btn btn-navy" title="Audit the OPEN service orders only"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> Run Open Audit</button>
+              <button id="fixAddr" class="btn btn-ghost" title="Set Bill To / Ship To on every Ready-to-Invoice estimate to match its labour location. This CHANGES Fullbay."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> Fix Addresses</button>
+              <button id="stop" class="btn hidden"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> Stop</button>
+            </div>
+          </div>
+          <div class="cgroup">
+            <div class="clabel">Results</div>
+            <div class="crow">
+              <button id="view" class="btn btn-ghost" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> View Report</button>
+              <button id="viewOpen" class="btn btn-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> Open SO Report</button>
+              <a id="csv" class="btn btn-ghost" href="/report-csv" download><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> CSV</a>
+              <button id="pdf" class="btn btn-ghost" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> <span id="pdfLabel">PDF</span></button>
+            </div>
+          </div>
         </div>
-        <p class="herohint">First time or after a timeout, click <strong>Sign in to Fullbay</strong> — the login opens on the shop computer. Once signed in, anyone can run audits (here or remotely).</p>
+        <div id="runmsg" class="runmsg"></div>
+        <p class="herohint">FreeAudit runs on this PC with <strong>your own</strong> Fullbay and Vorto logins. Save them in <strong>Settings</strong> and it signs in by itself; if a session ever expires, click <strong>Sign in to Fullbay</strong> and a browser window opens here for you to log in once.</p>
       </section>
 
       <section id="results" class="results"></section>
@@ -463,6 +478,7 @@
           <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></div>
           <div><h2>Live progress</h2><div class="desc">Real-time output as the audit runs</div></div>
         </div>
+        <div id="progIdle" class="prog-idle">Ready — press <b>Run Audit</b> to begin.</div>
         <div id="progWrap" class="progwrap hidden">
           <div class="progtrack"><div id="progfill" class="progfill"></div></div>
           <div id="proglabel" class="proglabel"></div>
@@ -473,7 +489,7 @@
           <div class="lstat"><div class="lv" id="lsPhotos">0</div><div class="ll">Photos checked</div></div>
           <div class="lstat wide"><div class="lv" id="lsCurrent">—</div><div class="ll">Current order</div></div>
         </div>
-        <pre id="log" class="console"><span class="dim">Ready — press Run Audit to begin.</span></pre>
+        <details class="logdetail"><summary>Show detail</summary><pre id="log" class="console"></pre></details>
       </section>
 
       <section class="card">
@@ -510,7 +526,7 @@
       <div class="sgrid">
         <div class="field"><label>Orders to audit (0 = all)</label><input type="number" id="maxOrders" min="0"></div>
         <div class="field"><label>Tracker year (blank = current)</label><input type="text" id="sheetYear" placeholder="auto"></div>
-        <div class="field full"><label>Live Google Sheets links — one per line (read live, never stale)</label><textarea id="sheetLinks" rows="2" placeholder="https://docs.google.com/spreadsheets/d/.../edit" style="width:100%;font:inherit;padding:8px;box-sizing:border-box"></textarea></div>
+        <div class="field full"><label>Live Google Sheets links — one per line (read live, never stale)</label><textarea id="sheetLinks" rows="2" placeholder="https://docs.google.com/spreadsheets/d/.../edit" style="width:100%;font:inherit;padding:8px;box-sizing:border-box"></textarea><div id="saHint" class="hint hidden"></div></div>
         <div class="field full"><label>Google Sheets API key (enables live reading)</label><input type="password" id="googleApiKey" autocomplete="off" placeholder="not set"></div>
         <div class="field full"><label>Tracker file (.xlsx fallback, blank = newest)</label><input type="text" id="sheetFile" placeholder="auto-detect newest .xlsx — used only if live reading is off/unavailable"></div>
         <div class="field full"><label>Signup code (people need this to create an account)</label><input type="text" id="signupCode"></div>
@@ -518,6 +534,7 @@
         <div class="field"><label>Fullbay password</label><input type="password" id="fullbayPassword" autocomplete="off"></div>
         <div class="field"><label>Vorto phone number (for auto sign-in)</label><input type="text" id="vortoUser" placeholder="phone used to log into Vorto" autocomplete="off"></div>
         <div class="field"><label>Vorto password</label><input type="password" id="vortoPassword" autocomplete="off"></div>
+        <div class="field full signin-row"><span class="signin-note">Credentials above are used automatically. Sign in by hand only if a session expires.</span><button id="connect" class="btn btn-ghost btn-sm2">Sign in to Fullbay</button><button id="connectVorto" class="btn btn-ghost btn-sm2">Sign in to Vorto</button></div>
         <label class="toggle full"><input type="checkbox" id="checkDuplicatePhotos"> Detect duplicate photos across orders (slower)</label>
         <label class="toggle full"><input type="checkbox" id="checkSheetCompletion"> Check “complete in sheet” tracker</label>
       </div>
@@ -594,6 +611,30 @@
     </div>
   </div>
 
+  <!-- ===================== SCORECARD MODAL ===================== -->
+  <div id="scoreOverlay" class="overlay">
+    <div class="modal modal-lg">
+      <div style="display:flex;align-items:flex-start">
+        <div><h3>Scorecard</h3><p class="lead" id="scoreLead">Who submits orders, and what keeps getting missed.</p></div>
+        <button class="x" id="closeScore">&times;</button>
+      </div>
+      <div class="score-controls">
+        <label class="score-range">Weeks
+          <select id="scoreWeeks">
+            <option value="1">this week</option>
+            <option value="4">last 4</option>
+            <option value="8" selected>last 8</option>
+            <option value="26">last 26</option>
+            <option value="52">last 52</option>
+          </select>
+        </label>
+        <span id="scoreMeta" class="score-meta"></span>
+      </div>
+      <div id="scoreBody"></div>
+      <div class="modal-actions"><button class="btn btn-navy" id="okScore">Close</button></div>
+    </div>
+  </div>
+
   <!-- ===================== IMPACT MODAL ===================== -->
   <div id="impactOverlay" class="overlay">
     <div class="modal modal-lg">
@@ -617,41 +658,6 @@
       <div class="modal-actions"><button class="btn btn-navy" id="okImpact">Close</button></div>
     </div>
   </div>
-
-  <!-- ===================== SCORECARD MODAL ===================== -->
-  <div id="scoreOverlay" class="overlay">
-    <div class="modal modal-lg">
-      <div style="display:flex;align-items:flex-start">
-        <div><h3>Mechanic Efficiency Scorecard</h3><p class="lead" id="scoreDate">Clocked hours, billed hours &amp; efficiency per mechanic, by week.</p></div>
-        <button class="x" id="closeScore">&times;</button>
-      </div>
-      <div class="score-controls">
-        <div class="seg" id="scoreMetric">
-          <button class="seg-btn active" data-metric="eff">Efficiency</button>
-          <button class="seg-btn" data-metric="clocked">Clocked</button>
-          <button class="seg-btn" data-metric="billed">Billed</button>
-        </div>
-        <div class="seg" id="scoreGroup">
-          <button class="seg-btn active" data-grp="week">Weekly</button>
-          <button class="seg-btn" data-grp="day">Daily</button>
-        </div>
-        <label class="score-date">From <input type="date" id="scoreFrom"></label>
-        <label class="score-date">To <input type="date" id="scoreTo"></label>
-        <button class="btn btn-navy btn-sm" id="scoreApply">Apply</button>
-        <div class="score-quick">
-          <button class="chip-btn" data-quick="thisweek">This week</button>
-          <button class="chip-btn" data-quick="4w">Last 4 wks</button>
-          <button class="chip-btn" data-quick="8w">Last 8 wks</button>
-          <button class="chip-btn" data-quick="today">Today</button>
-          <button class="chip-btn chip-refresh" id="scoreRefresh" title="Re-pull completed hours from Fullbay">↻ Refresh billed</button>
-        </div>
-      </div>
-      <div id="scoreBody"></div>
-      <p class="score-foot" id="scoreFoot">Weeks run <b>Monday–Sunday</b>. <b>Clocked hours</b> are live from Connecteam; <b>efficiency = billed ÷ clocked.</b></p>
-      <div class="modal-actions"><button class="btn btn-navy" id="okScore">Close</button></div>
-    </div>
-  </div>
-
   <!-- ===================== ACTIVE USERS MODAL ===================== -->
   <div id="usersOverlay" class="overlay">
     <div class="modal">
@@ -714,8 +720,11 @@
   let appReady = false;
   function initApp(){
     if (appReady) return; appReady = true;
-    const log=$('log'), chip=$('chip');
-    const addLine=(t)=>{ log.textContent += t+'\n'; log.scrollTop=log.scrollHeight; };
+    const chip=$('chip');
+    // The scrolling console was removed; notable messages (errors, "already in
+    // use", sign-in prompts) surface as a single line by the buttons instead.
+    // Routine per-order output still drives the progress bar and the stat cards.
+    const addLine=(t)=>{ const s=String(t).trim(); if(!s) return; $('runmsg').textContent=s; const el=$('log'); if(el){ el.textContent += s + String.fromCharCode(10); el.scrollTop=el.scrollHeight; } };
     function setRunning(r, by, kind){
       $('run').disabled=r; $('connect').disabled=r;
       $('stop').classList.toggle('hidden', !r);
@@ -729,12 +738,12 @@
     }
     let runTotal = 0;
     function setProg(pct, label, indeterminate){
-      $('progWrap').classList.remove('hidden');
+      $('progWrap').classList.remove('hidden'); $('progIdle').classList.add('hidden');
       const f=$('progfill');
       if(indeterminate){ f.classList.add('indeterminate'); } else { f.classList.remove('indeterminate'); f.style.width=Math.max(0,Math.min(100,pct))+'%'; }
       $('proglabel').textContent=label||'';
     }
-    const hideProg=()=>$('progWrap').classList.add('hidden');
+    const hideProg=()=>{ $('progWrap').classList.add('hidden'); $('progIdle').classList.remove('hidden'); };
     function handleLogForProgress(line){
       let m = line.match(/Auditing\s+(\d+)/i); if(m){ runTotal=+m[1]; }
       m = line.match(/\[(\d+)\/(\d+)\]\s*(\S+)?/);
@@ -759,6 +768,27 @@
       const inner = isNum ? '<div class="dv" data-count="'+val+'">0</div>' : '<div class="dv">'+esc(String(val))+'</div>';
       return '<div class="dcard '+(cls||'')+'">'+inner+'<div class="dl">'+label+'</div></div>';
     }
+    /* First-run setup notice. Each person runs their own copy with their own
+       logins, so until those are saved a Run Audit just stalls on a login page —
+       say so up front instead of letting them find out mid-run. */
+    function renderSetupBanner(hl){
+      const el = $('setupBanner');
+      if(!el) return;
+      const missing = [];
+      if(!hl.fullbayCredsSet) missing.push('<b>Fullbay</b> email &amp; password — needed to open the Ready-to-Invoice list');
+      if(!hl.vortoCredsSet)  missing.push('<b>Vorto</b> phone &amp; password — needed for the MT-resolved check');
+      if(!missing.length){ el.classList.add('hidden'); el.innerHTML=''; return; }
+      el.innerHTML =
+        '<h3>Finish setting up FreeAudit</h3>'+
+        '<p>FreeAudit runs on this PC using <b>your own</b> logins — they are saved here and never shared. '+
+        'Add these in Settings before your first run:</p>'+
+        '<ul><li>'+missing.join('</li><li>')+'</li></ul>'+
+        '<button class="btn btn-navy" id="setupOpenSettings">Open Settings</button>';
+      el.classList.remove('hidden');
+      $('setupOpenSettings').onclick = () => $('settingsOverlay').classList.add('open');
+    }
+
+
     async function loadDashboard(){
       const me = window.__me || {};
       const h = new Date().getHours();
@@ -780,6 +810,7 @@
       pills += '<span class="dpill"><i></i>'+online+' online</span>';
       if(hl.trackerUpdated){ const fresh=(Date.now()-new Date(hl.trackerUpdated))<7*864e5; pills += '<span class="dpill '+(fresh?'ok':'warn')+'"><i></i>Trackers '+relTime(hl.trackerUpdated)+'</span>'; }
       $('dashPills').innerHTML = pills;
+      renderSetupBanner(hl);
       if(sum){
         const hrs=(sum.estMinutesSaved||0)/60; const hsaved = hrs>=10?Math.round(hrs)+' hrs':(hrs>=1?hrs.toFixed(1)+' hrs':Math.round(sum.estMinutesSaved||0)+' min');
         $('dashGrid').innerHTML =
@@ -827,9 +858,9 @@
     evtSource = new EventSource('/api/events');
     evtSource.onmessage = (e) => {
       const m = JSON.parse(e.data);
-      if (m.type==='start'){ log.textContent=''; $('results').classList.remove('show'); runTotal=0; lastKind=m.kind; setRunning(true, m.by, m.kind); setProg(0, (m.kind==='signin'?'Opening Fullbay sign-in…':'Starting up…'), true); if(m.kind!=='signin'){ resetLiveStats(); showReportState('building'); } loadDashboard(); }
+      if (m.type==='start'){ const lg=$('log'); if(lg) lg.textContent=''; $('results').classList.remove('show'); runTotal=0; lastKind=m.kind; setRunning(true, m.by, m.kind); setProg(0, (m.kind==='signin'?'Opening Fullbay sign-in…':'Starting up…'), true); if(m.kind!=='signin' && m.kind!=='open'){ resetLiveStats(); showReportState('building'); } loadDashboard(); }
       else if (m.type==='log'){ addLine(m.line); handleLogForProgress(m.line); updateLiveStats(m.line); if(/orders.*findings/i.test(m.line)) showSummary(m.line); }
-      else if (m.type==='done'){ setRunning(false); addLine('\n— Finished —'); setProg(100,'Complete',false); $('view').disabled=false; $('pdf').disabled=false; if(lastKind!=='signin'&&lastKind!=='billed') loadReport(); loadImpact(); loadDashboard(); if(lastKind==='billed' && $('scoreOverlay').classList.contains('open')) loadScore(); }
+      else if (m.type==='done'){ setRunning(false); addLine('\n— Finished —'); setProg(100,'Complete',false); $('view').disabled=false; $('pdf').disabled=false; if(lastKind!=='signin' && lastKind!=='open') loadReport(); loadImpact(); loadDashboard(); }
     };
 
     /* How it works modal */
@@ -865,177 +896,100 @@
         requestAnimationFrame(()=>{ setTimeout(()=>document.querySelectorAll('#impactOverlay .bar').forEach(b=>{ b.style.width=b.dataset.w+'%'; }),60); });
       }).catch(()=>{});
     }
+
+    /* Scorecard — week-by-week record of who misses what. Findings are the
+       audit's own; this only remembers and groups them. */
+    const CHECKLABEL={A:'Photos',B:'Parts',C:'Inspection sheet',D:'Hours',E:'PO',F:'Duplicate photo',G:'Tracker',H:'Vorto'};
+    let scoreData=null;
+    const rateClass=(v)=> v>=1 ? 'sc-hi' : (v>=0.4 ? 'sc-mid' : 'sc-lo');
+
+    function renderRoster(){
+      const d=scoreData;
+      if(!d || !d.roster.length){
+        $('scoreBody').innerHTML='<div class="sc-empty">No audits recorded yet. Run an audit and the scorecard starts building.</div>';
+        $('scoreMeta').textContent='';
+        return;
+      }
+      $('scoreMeta').textContent=d.runs+' audit'+(d.runs===1?'':'s')+' across '+d.weeks.length+' week'+(d.weeks.length===1?'':'s');
+      let h='<table class="sc-table"><thead><tr><th>Employee</th><th>Orders</th><th>Findings</th><th>Per order</th><th>Most missed</th></tr></thead><tbody>';
+      d.roster.forEach(p=>{
+        const ent=Object.entries(p.byCheck).sort((a,b)=>b[1]-a[1]);
+          const top=ent.slice(0,2).map(([k,n])=>'<span class="sc-chip">'+(CHECKLABEL[k]||k)+' '+n+'</span>').join('')+(ent.length>2?'<span class="sc-chip sc-more">+'+(ent.length-2)+'</span>':'');
+        h+='<tr class="sc-row" data-name="'+esc(p.name)+'">'
+          +'<td class="sc-name">'+esc(p.name)+'</td>'
+          +'<td>'+p.orders+'</td><td>'+p.findings+'</td>'
+          +'<td><span class="sc-rate '+rateClass(p.perOrder)+'">'+p.perOrder+'</span></td>'
+          +'<td><div class="sc-chips">'+(top||'<span class="sc-chip">clean</span>')+'</div></td></tr>';
+      });
+      h+='</tbody></table>';
+      h+='<div class="sc-sec">Most common misses</div>';
+      const checks=Object.entries(d.byCheck).map(([k,l])=>({k,total:l.reduce((a,b)=>a+b.count,0),l})).sort((a,b)=>b.total-a.total);
+      const max=checks.length?checks[0].total:1;
+      checks.forEach(c=>{
+        const who=c.l.slice(0,4).map(x=>'<span class="sc-who"><b>'+esc(x.name)+'</b> '+x.count+'</span>').join('');
+        h+='<div class="sc-miss">'
+          +'<div class="sc-miss-head"><span class="sc-miss-name">'+(CHECKLABEL[c.k]||c.k)+'</span>'
+          +'<span class="sc-miss-count">'+c.total+'</span></div>'
+          +'<div class="sc-track"><i style="width:'+Math.round(c.total/max*100)+'%"></i></div>'
+          +'<div class="sc-who-row">'+who+'</div>'
+          +'</div>';
+      });
+      $('scoreBody').innerHTML=h;
+      document.querySelectorAll('.sc-row').forEach(r=>{ r.onclick=()=>renderPerson(r.dataset.name); });
+    }
+
+    function renderPerson(name){
+      const p=scoreData.roster.find(x=>x.name===name);
+      if(!p) return renderRoster();
+      let h='<button class="sc-back" id="scBack">&larr; All employees</button>';
+      h+='<div style="font-size:19px;font-weight:800;color:var(--navy)">'+esc(p.name)+'</div>';
+      h+='<div style="font-size:12.5px;color:var(--faint);margin:3px 0 4px">'+p.orders+' order'+(p.orders===1?'':'s')+' submitted &middot; '+p.findings+' finding'+(p.findings===1?'':'s')+' &middot; '+p.perOrder+' per order</div>';
+      const items=Object.entries(p.byCheck).sort((a,b)=>b[1]-a[1]);
+      h+='<div class="sc-sec">What they are missing</div>';
+      if(!items.length){ h+='<div class="sc-empty">Nothing flagged in this period.</div>'; }
+      else {
+        const mx=items[0][1];
+        items.forEach(([k,n])=>{
+          h+='<div class="sc-miss"><div class="sc-miss-head"><span class="sc-miss-name">'+(CHECKLABEL[k]||k)+'</span><span class="sc-miss-count">'+n+'</span></div><div class="sc-track"><i style="width:'+Math.round(n/mx*100)+'%"></i></div></div>';
+        });
+      }
+      h+='<div class="sc-sec">Week by week</div>';
+      const wks=scoreData.weeks.slice().sort();
+      const peak=Math.max(1,...wks.map(w=>(p.weeks[w]&&Object.values(p.weeks[w].findings).reduce((a,b)=>a+b,0))||0));
+      wks.forEach(w=>{
+        const rec=p.weeks[w];
+        const n=rec?Object.values(rec.findings).reduce((a,b)=>a+b,0):0;
+        const o=rec?rec.orders:0;
+        // Always draw the track, so a clean week reads as an empty bar rather
+        // than a blank gap in the column.
+        h+='<div class="sc-week"><span class="sc-week-lbl">'+fmtWeekLabel(w)+'</span>'
+          +'<span class="sc-track"><i style="width:'+Math.round(n/peak*100)+'%"></i></span>'
+          +'<b>'+n+(o?' / '+o:'')+'</b></div>';
+      });
+      $('scoreBody').innerHTML=h;
+      $('scBack').onclick=renderRoster;
+    }
+    function fmtWeekLabel(iso){ const d=new Date(iso+'T00:00:00'); return 'wk of '+d.toLocaleDateString([], {month:'short', day:'numeric'}); }
+
+    function loadScore(){
+      $('scoreBody').innerHTML='<div class="sc-empty">Loading…</div>';
+      fetch('/api/scorecard?weeks='+$('scoreWeeks').value).then(r=>r.json()).then(d=>{ scoreData=d; renderRoster(); })
+        .catch(()=>{ $('scoreBody').innerHTML='<div class="sc-empty">Could not load the scorecard.</div>'; });
+    }
+    const closeScore=()=>$('scoreOverlay').classList.remove('open');
+    $('openScore').onclick=()=>{ $('menu').classList.remove('open'); $('scoreOverlay').classList.add('open'); loadScore(); };
+    $('scoreWeeks').onchange=loadScore;
+    $('closeScore').onclick=closeScore; $('okScore').onclick=closeScore;
+    $('scoreOverlay').onclick=(e)=>{ if(e.target===$('scoreOverlay')) closeScore(); };
     const closeImpact=()=>$('impactOverlay').classList.remove('open');
     $('openImpact').onclick=()=>{ loadImpact(); $('impactOverlay').classList.add('open'); };
     $('closeImpact').onclick=closeImpact; $('okImpact').onclick=closeImpact;
     $('impactOverlay').onclick=(e)=>{ if(e.target===$('impactOverlay')) closeImpact(); };
 
-    /* Scorecard modal — clocked hours (live from Connecteam) + billed + efficiency, by week or day */
-    function fmtWeek(iso){ const d=new Date(iso+'T00:00:00'); return d.toLocaleDateString([], {month:'short', day:'numeric'}); }
-    const normName = (s)=> (s||'').toLowerCase().replace(/\s+/g,' ').trim();
-    function effClass(pct){ if(pct>=70) return 'eff-hi'; if(pct>=45) return 'eff-mid'; return 'eff-lo'; }
-    const isoOf = (d)=> d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-    function whoCell(i,name,title){
-      return '<td class="who"><span class="score-rank'+(i===0?' top':'')+'">'+(i+1)+'</span>'+
-        '<span class="who-name">'+esc(name)+(title?'<span class="who-title">'+esc(title)+'</span>':'')+'</span></td>';
-    }
-    let scoreGroup='week', scoreMetric='eff';
-
-    // Combined view: Connecteam clocked + Fullbay billed (completed) hours -> efficiency.
-    function renderScore(clocked, billed){
-      if(!clocked || !clocked.configured || !clocked.byPerson || !clocked.byPerson.length){
-        if(clocked && clocked.error){ $('scoreBody').innerHTML='<div class="score-empty">Couldn’t reach Connecteam: '+esc(clocked.error)+'</div>'; }
-        else { $('scoreBody').innerHTML='<div class="score-empty">No clocked hours for this range — connect Connecteam in Settings or widen the dates.</div>'; }
-        $('scoreDate').textContent='Mechanic efficiency by week.';
-        return;
-      }
-      const isDay = clocked.groupBy==='day';
-      const periods = (clocked.periods && clocked.periods.length) ? clocked.periods : (clocked.weeks||[]).map(w=>({key:w,label:fmtWeek(w)}));
-      // Billed lookup by normalized name -> { weekHours{}, total }.
-      const billedMap = {};
-      const haveBilled = !!(billed && billed.available && billed.byEmployee && billed.byEmployee.length);
-      if(haveBilled) billed.byEmployee.forEach(e=>{ billedMap[normName(e.name)] = e; });
-      // Daily view can't show billed/efficiency (Fullbay billing is weekly) -> force Clocked.
-      const metric = (isDay || !haveBilled) ? 'clocked' : scoreMetric;
-
-      const rng = clocked.rangeStart && clocked.rangeEnd ? (fmtWeek(clocked.rangeStart)+' – '+fmtWeek(clocked.rangeEnd)) : '';
-      const upd = haveBilled && billed.updatedAt ? (' · billed as of '+new Date(billed.updatedAt).toLocaleDateString()) : '';
-      const metricLabel = metric==='eff'?'Efficiency (billed ÷ clocked)':metric==='billed'?'Billed (completed) hours':'Clocked hours';
-      $('scoreDate').textContent = metricLabel+(isDay?' by day':' by week')+(rng?' · '+rng:'')+upd;
-
-      // Per-week cell for the chosen metric.
-      function cell(person, b, key){
-        const c = person.weekHours[key];
-        if(metric==='clocked') return c!=null?c.toFixed(1):'—';
-        const bh = b && b.weekHours ? b.weekHours[key] : null;
-        if(metric==='billed') return bh!=null?bh.toFixed(1):'—';
-        // efficiency
-        if(c==null || c===0 || bh==null) return '—';
-        const e = Math.round(bh/c*100);
-        return '<span class="eff '+effClass(e)+'">'+e+'%</span>';
-      }
-
-      // ----- Team aggregates over the displayed periods -----
-      const teamCW={}, teamBW={}; let teamC=0, teamB=0, ppl=0;
-      clocked.byPerson.forEach(person=>{
-        const b = billedMap[normName(person.name)];
-        let any=false;
-        periods.forEach(p=>{
-          const cv=person.weekHours[p.key]; if(cv!=null){ teamCW[p.key]=(teamCW[p.key]||0)+cv; teamC+=cv; any=true; }
-          const bv=b&&b.weekHours?b.weekHours[p.key]:null; if(bv!=null){ teamBW[p.key]=(teamBW[p.key]||0)+bv; teamB+=bv; }
-        });
-        if(any) ppl++;
-      });
-      const teamEff = (haveBilled && teamC>0 && teamB>0) ? Math.round(teamB/teamC*100) : null;
-
-      // Team efficiency banner (front and center).
-      let banner='';
-      if(haveBilled && !isDay && teamEff!=null){
-        banner='<div class="score-team"><div class="st-eff '+effClass(teamEff)+'">'+teamEff+'%</div>'+
-          '<div class="st-meta"><div class="st-label">Team average efficiency</div>'+
-          '<div class="st-sub">'+teamB.toFixed(0)+' billed ÷ '+teamC.toFixed(0)+' clocked hrs · '+ppl+' mechanics</div></div></div>';
-      } else {
-        banner='<div class="score-team"><div class="st-eff st-plain">'+teamC.toFixed(0)+'</div>'+
-          '<div class="st-meta"><div class="st-label">Team clocked hours</div>'+
-          '<div class="st-sub">'+ppl+' mechanics'+(isDay?' · switch to Weekly for team efficiency':'')+'</div></div></div>';
-      }
-
-      // Team row cell for the chosen metric.
-      function teamCell(key){
-        if(metric==='clocked') return (teamCW[key]||0).toFixed(1);
-        if(metric==='billed') return (teamBW[key]!=null?teamBW[key]:0).toFixed(1);
-        const c=teamCW[key], b=teamBW[key];
-        if(!c || b==null) return '—';
-        const e=Math.round(b/c*100); return '<span class="eff '+effClass(e)+'">'+e+'%</span>';
-      }
-
-      let html=banner+'<table class="score-table score-wide"><thead><tr><th>Mechanic</th>';
-      periods.forEach(p=>html+='<th>'+esc(p.label||fmtWeek(p.key))+'</th>');
-      html+='<th class="tot-col">Clocked</th>';
-      if(haveBilled && !isDay) html+='<th class="tot-col">Billed</th><th class="tot-col">Eff.</th>';
-      html+='</tr></thead><tbody>';
-      clocked.byPerson.forEach((person,i)=>{
-        const b = billedMap[normName(person.name)];
-        // Totals over the DISPLAYED periods.
-        let cSum=0, bSum=0;
-        periods.forEach(p=>{ const cv=person.weekHours[p.key]; if(cv!=null) cSum+=cv; const bv=b&&b.weekHours?b.weekHours[p.key]:null; if(bv!=null) bSum+=bv; });
-        const effTot = (haveBilled && cSum>0 && bSum>0) ? Math.round(bSum/cSum*100) : null;
-        html+='<tr>'+whoCell(i,person.name,person.title);
-        periods.forEach(p=>{ html+='<td>'+cell(person,b,p.key)+'</td>'; });
-        html+='<td class="tot-col tot">'+cSum.toFixed(1)+'</td>';
-        if(haveBilled && !isDay){
-          html+='<td class="tot-col">'+(b?bSum.toFixed(1):'—')+'</td>';
-          html+='<td class="tot-col">'+(effTot!=null?'<span class="eff '+effClass(effTot)+'">'+effTot+'%</span>':'—')+'</td>';
-        }
-        html+='</tr>';
-      });
-      // Team total row.
-      html+='</tbody><tfoot><tr class="team-row"><td class="who"><span class="score-rank team-rank">Σ</span><span class="who-name">Team average<span class="who-title">'+ppl+' mechanics</span></span></td>';
-      periods.forEach(p=>{ html+='<td>'+teamCell(p.key)+'</td>'; });
-      html+='<td class="tot-col tot">'+teamC.toFixed(1)+'</td>';
-      if(haveBilled && !isDay){
-        html+='<td class="tot-col tot">'+teamB.toFixed(1)+'</td>';
-        html+='<td class="tot-col">'+(teamEff!=null?'<span class="eff '+effClass(teamEff)+'">'+teamEff+'%</span>':'—')+'</td>';
-      }
-      html+='</tr></tfoot></table>';
-      $('scoreBody').innerHTML=html;
-      $('scoreFoot').innerHTML=(isDay?'Each column is one <b>day</b>. ':'Weeks run <b>Monday–Sunday</b>. ')
-        +'<b>Clocked</b> = Connecteam time on the clock; <b>Billed</b> = Fullbay completed (invoiced) hours; <b>Efficiency = billed ÷ clocked</b>. '
-        +(haveBilled?(isDay?'Switch to <b>Weekly</b> to see billed hours & efficiency.':'Use <b>↻ Refresh billed</b> to re-pull the latest completed hours from Fullbay.')
-          :'No billed hours yet — press <b>↻ Refresh billed</b> to pull completed hours from Fullbay.');
-    }
-
-    function loadScore(){
-      const start=$('scoreFrom').value, end=$('scoreTo').value;
-      $('scoreBody').innerHTML='<div class="score-empty">Loading…</div>';
-      const qs='groupBy='+scoreGroup+(start?'&start='+start:'')+(end?'&end='+end:'');
-      Promise.all([
-        fetch('/api/clocked?'+qs).then(r=>r.json()).catch(()=>null),
-        fetch('/api/billed').then(r=>r.json()).catch(()=>null),
-      ]).then(([clocked, billed])=>renderScore(clocked, billed));
-    }
-    function setQuickRange(kind){
-      const today=new Date(); let from=new Date(today), to=new Date(today);
-      if(kind==='today'){ scoreGroup='day'; }
-      else if(kind==='thisweek'){ const dow=(today.getDay()+6)%7; from=new Date(today); from.setDate(from.getDate()-dow); scoreGroup='day'; }
-      else if(kind==='4w'){ from.setDate(from.getDate()-27); scoreGroup='week'; }
-      else if(kind==='8w'){ from.setDate(from.getDate()-55); scoreGroup='week'; }
-      $('scoreFrom').value=isoOf(from); $('scoreTo').value=isoOf(to);
-      syncGroupButtons();
-      loadScore();
-    }
-    function syncGroupButtons(){
-      document.querySelectorAll('#scoreGroup .seg-btn').forEach(b=>b.classList.toggle('active', b.dataset.grp===scoreGroup));
-      document.querySelectorAll('#scoreMetric .seg-btn').forEach(b=>b.classList.toggle('active', b.dataset.metric===scoreMetric));
-    }
-
-    const closeScore=()=>$('scoreOverlay').classList.remove('open');
-    $('openScore').onclick=()=>{
-      $('menu').classList.remove('open');
-      // Default range: last 6 weeks ending today.
-      const today=new Date(); const from=new Date(today); from.setDate(from.getDate()-41);
-      $('scoreTo').value=isoOf(today); $('scoreFrom').value=isoOf(from);
-      scoreGroup='week'; scoreMetric='eff'; syncGroupButtons();
-      $('scoreOverlay').classList.add('open');
-      loadScore();
-    };
-    $('scoreApply').onclick=loadScore;
-    document.querySelectorAll('#scoreGroup .seg-btn').forEach(b=>{ b.onclick=()=>{ scoreGroup=b.dataset.grp; syncGroupButtons(); loadScore(); }; });
-    document.querySelectorAll('#scoreMetric .seg-btn').forEach(b=>{ b.onclick=()=>{ scoreMetric=b.dataset.metric; syncGroupButtons(); loadScore(); }; });
-    document.querySelectorAll('.score-quick .chip-btn:not(.chip-refresh)').forEach(b=>{ b.onclick=()=>setQuickRange(b.dataset.quick); });
-    $('scoreRefresh').onclick = async () => {
-      const btn=$('scoreRefresh'); const prev=btn.textContent; btn.textContent='↻ Refreshing…'; btn.disabled=true;
-      try{
-        const r=await fetch('/api/refresh-billed',{method:'POST'});
-        if(r.status===409){ const d=await r.json().catch(()=>({})); btn.textContent=(d.startedBy?d.startedBy+' is busy':'Busy — try again'); }
-        else { addLine('Pulling completed hours from Fullbay… (sign in if a Fullbay window opens)'); }
-      }catch(e){ /* ignore */ }
-      setTimeout(()=>{ btn.textContent=prev; btn.disabled=false; }, 4000);
-    };
-    $('closeScore').onclick=closeScore; $('okScore').onclick=closeScore;
-    $('scoreOverlay').onclick=(e)=>{ if(e.target===$('scoreOverlay')) closeScore(); };
     const busyMsg = async (r) => { const d=await r.json().catch(()=>({})); addLine('Already in use'+(d.startedBy?' — '+d.startedBy+' is running it right now':'')+'. It will free up when they finish (or press Stop).'); };
     $('run').onclick = async () => { const r=await fetch('/api/run',{method:'POST'}); if(r.status===409) busyMsg(r); };
+    $('runOpen').onclick = async () => { const r=await fetch('/api/run-open',{method:'POST'}); if(r.status===409) busyMsg(r); else addLine('Auditing open service orders...'); };
+    $('viewOpen').onclick = () => window.open('/open-report','_blank');
     $('connect').onclick = async () => {
       const r=await fetch('/api/connect-fullbay',{method:'POST'});
       if(r.status===409) busyMsg(r); else addLine('Opening Fullbay sign-in on the shop computer…');
@@ -1043,6 +997,12 @@
     $('connectVorto').onclick = async () => {
       const r=await fetch('/api/connect-vorto',{method:'POST'});
       if(r.status===409) busyMsg(r); else addLine('Opening Vorto portal sign-in on the shop computer…');
+    };
+    // The only action that writes to Fullbay, so it confirms first.
+    $('fixAddr').onclick = async () => {
+      if(!confirm('This will CHANGE Bill To and Ship To on every Ready-to-Invoice estimate in Fullbay to match the labour location on each order. Continue?')) return;
+      const r = await fetch('/api/fix-addresses',{method:'POST'});
+      if(r.status===409) busyMsg(r); else addLine('Fixing estimate addresses — watch the progress below.');
     };
     $('stop').onclick = async () => { addLine('Stopping…'); await fetch('/api/cancel',{method:'POST'}); };
     $('view').onclick = () => window.open('/report','_blank');
@@ -1067,7 +1027,7 @@
 
     fetch('/api/status').then(r=>r.json()).then(s=>{
       if(s.running){ setProg(0, 'In progress…', true); lastKind=s.kind||''; if(s.kind!=='signin'){ resetLiveStats(); showReportState('building'); } }
-      if(s.lines&&s.lines.length){ log.textContent=''; s.lines.forEach(m=>{ if(m.type==='log'){addLine(m.line); handleLogForProgress(m.line); updateLiveStats(m.line); if(/orders.*findings/i.test(m.line)) showSummary(m.line);} }); }
+      if(s.lines&&s.lines.length){ s.lines.forEach(m=>{ if(m.type==='log'){handleLogForProgress(m.line); updateLiveStats(m.line); if(/orders.*findings/i.test(m.line)) showSummary(m.line);} }); }
       setRunning(s.running, s.startedBy, s.kind);
       if(!s.running){ hideProg(); if(s.reportExists) loadReport(); else showReportState('empty'); }
       if(s.reportExists){ $('view').disabled=false; $('pdf').disabled=false; }
@@ -1078,6 +1038,7 @@
     fetch('/api/config').then(r=>r.json()).then(c=>{
       $('maxOrders').value=c.maxOrders??0; $('sheetFile').value=c.sheetFile||''; $('sheetYear').value=c.sheetYear||''; $('signupCode').value=c.signupCode||'';
       $('sheetLinks').value=(c.sheets||[]).join('\n');
+      if(c.serviceAccountEmail){ $('saHint').innerHTML='Any tracker <b>shared with '+esc(c.serviceAccountEmail)+'</b> (Viewer) is read automatically — '+'only list a sheet above if it is NOT shared with that address.'; $('saHint').classList.remove('hidden'); }
       $('googleApiKey').value=''; $('googleApiKey').placeholder = c.googleApiKeySet ? '•••••••• (saved — leave blank to keep)' : 'not set';
       $('fullbayUser').value=c.fullbayUser||'';
       $('fullbayPassword').value=''; $('fullbayPassword').placeholder = c.fullbayCredsSet ? '•••••••• (saved — leave blank to keep)' : 'enter password';

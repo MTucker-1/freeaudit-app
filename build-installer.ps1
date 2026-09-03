@@ -8,13 +8,22 @@ $iscc  = Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'
 $nodeExe = (Get-Command node).Source
 $pwCache = Join-Path $env:LOCALAPPDATA 'ms-playwright'
 
+# Single source of truth for the version — version.json, the same file the
+# updater compares against. Hardcoding it here made fresh installs claim an old
+# version and immediately re-download code they already had.
+$ver = (Get-Content (Join-Path $proj 'version.json') -Raw | ConvertFrom-Json).version
+if (-not $ver) { throw 'version.json has no "version" field.' }
+Write-Host "Building FreeAudit $ver"
+
 Write-Host '[1/9] Clean staging…'
 if (Test-Path $build) { Remove-Item $build -Recurse -Force }
 New-Item -ItemType Directory -Path $app -Force | Out-Null
 
 Write-Host '[2/9] App code…'
-'server.js','audit.js','vorto.js','gsheets.js','connecteam.js','checks.js','watch-server.js','package.json' |
-  ForEach-Object { Copy-Item (Join-Path $proj $_) $app -Force }
+# All root-level .js (matches what update.ps1 syncs, so a new module can't be
+# left out of one and not the other).
+Get-ChildItem (Join-Path $proj '*.js') -File | ForEach-Object { Copy-Item $_.FullName $app -Force }
+Copy-Item (Join-Path $proj 'package.json') $app -Force
 Copy-Item (Join-Path $proj 'public') (Join-Path $app 'public') -Recurse -Force
 
 Write-Host '[3/9] node_modules…'
@@ -40,9 +49,9 @@ $cfg = Get-Content (Join-Path $proj 'config.json') -Raw | ConvertFrom-Json
 $cfg.webPort = 4477
 $cfg.headless = $false
 Write-Json (Join-Path $app 'config.json') ($cfg | ConvertTo-Json -Depth 10)
-Write-Json (Join-Path $app 'version.json') '{ "version": "1.0.0" }'
+Write-Json (Join-Path $app 'version.json') ('{ "version": "' + $ver + '" }')
 # Update channel — set "repo" to OWNER/REPO once the GitHub repo exists (see TEAM-INSTALL.md).
-Write-Json (Join-Path $app 'update.json') '{ "repo": "MTucker-1/freeaudit-app", "branch": "main", "version": "1.0.0" }'
+Write-Json (Join-Path $app 'update.json') ('{ "repo": "MTucker-1/freeaudit-app", "branch": "main", "version": "' + $ver + '" }')
 # Per-user logins start blank — each teammate enters their own in Settings.
 Write-Json (Join-Path $app 'fullbay-credentials.json') '{ "username": "", "password": "" }'
 Write-Json (Join-Path $app 'vorto-credentials.json') '{ "username": "", "password": "" }'
@@ -56,7 +65,7 @@ Write-Host '[8/9] Stage installer script…'
 Copy-Item (Join-Path $proj 'installer\FreeAudit.iss') $build -Force
 
 Write-Host '[9/9] Compile installer…'
-& $iscc (Join-Path $build 'FreeAudit.iss')
+& $iscc "/DAppVer=$ver" (Join-Path $build 'FreeAudit.iss')
 $out = Join-Path $build 'FreeAudit-Setup.exe'
 if (Test-Path $out) {
   $mb = [int]((Get-Item $out).Length / 1MB)

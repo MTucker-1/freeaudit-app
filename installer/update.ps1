@@ -25,9 +25,19 @@ try {
   Expand-Archive -Path $zip -DestinationPath $tmp -Force
   $root = Get-ChildItem $tmp -Directory | Select-Object -First 1
   if (-not $root) { return }
-  # Replace only the code files/folders (leave runtime + user data alone).
-  $items = @('server.js', 'audit.js', 'vorto.js', 'gsheets.js', 'connecteam.js', 'checks.js', 'watch-server.js', 'public', 'version.json')
-  foreach ($it in $items) {
+  # Replace the code (leave runtime + user data alone). Every root-level .js is
+  # synced rather than a hand-kept list, so a newly added module ships on its own
+  # — a missed name here would break `require` in every installed copy.
+  # package.json is deliberately NOT synced: node_modules isn't updated, so a new
+  # dependency needs a fresh installer, not a code update.
+  Get-ChildItem (Join-Path $root.FullName '*.js') -File |
+    ForEach-Object { Copy-Item $_.FullName -Destination $Dir -Force }
+  # The launcher and the updater itself must update too. Without this, a fix to
+  # update.ps1 can never reach an installed copy — it would keep running the old
+  # updater forever, and only a fresh installer could repair it.
+  Get-ChildItem (Join-Path $root.FullName 'installer\*') -Include *.ps1, *.vbs -File -ErrorAction SilentlyContinue |
+    ForEach-Object { Copy-Item $_.FullName -Destination $Dir -Force }
+  foreach ($it in @('public', 'version.json')) {
     $src = Join-Path $root.FullName $it
     if (Test-Path $src) { Copy-Item $src -Destination $Dir -Recurse -Force }
   }
