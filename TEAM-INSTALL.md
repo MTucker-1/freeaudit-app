@@ -7,22 +7,34 @@ server, no dependency on anyone's computer being on.
 
 ---
 
-## For a teammate (installing it) — 3 steps
+## For a teammate (installing it) — 4 steps
 1. **Download** `FreeAudit-Setup.exe` from the link you were given and run it
    (no admin needed — it installs just for you).
-   - **Windows may show a blue "Windows protected your PC" box** (because the
-     installer isn't code-signed). Click **More info → Run anyway.** This is
-     expected for an in-house app. (To remove this warning entirely we'd need a
-     paid code-signing certificate — optional, see notes below.)
+   - **Windows may show a blue "Windows protected your PC" box** (the installer
+     isn't code-signed). Click **More info → Run anyway.** Expected for an
+     in-house app.
 2. **Open FreeAudit** from the desktop icon. Create your account using the
    **access code** (`FLSS2026`).
 3. Open **Settings** and enter **your own** Fullbay email/password and Vorto
-   phone/password. Save. That's it — click **Run Audit** anytime.
+   phone/password, then **Save settings**.
+4. Click **Run Audit**.
 
-Their copy runs entirely on their PC, with their logins, and quietly updates
-itself whenever you publish a new version.
+### Your logins are yours
+Every install starts with blank credential files. What you type in Settings stays
+on your PC — in your install folder — and is never shared with anyone else or
+sent anywhere. Your saved Fullbay browser session lives there too, so audits sign
+in as **you**, and the work shows in Fullbay under your name.
 
----
+Upgrading does not touch any of it: the installer only writes `config.json` and
+the credential files when they don't already exist.
+
+### What the buttons do
+- **Run Audit** — Ready-to-Invoice orders. Read-only; changes nothing in Fullbay.
+- **Run Open Audit** — orders still being worked: how long open, what is still
+  in progress, missing parts or photos. Also read-only.
+- **Fix Addresses** — the only action that WRITES to Fullbay. Sets Bill To /
+  Ship To on each estimate to match that order's labour location. Asks first.
+- **Scorecard** — week by week, who submits orders and what they keep missing.
 
 ## For the admin (you) — one-time setup
 

@@ -60,6 +60,12 @@ Write-Json (Join-Path $app 'google-credentials.json') '{ "apiKey": "" }'
 if (Test-Path (Join-Path $proj 'google-service-account.json')) {
   Copy-Item (Join-Path $proj 'google-service-account.json') $app -Force
 }
+# Facility address -> tax location mapping. Shop reference data, not a secret, but
+# gitignored because the update repo is public — so it ships in the installer or
+# the "Fix Addresses" action has nothing to resolve against.
+if (Test-Path (Join-Path $proj 'tax-locations.json')) {
+  Copy-Item (Join-Path $proj 'tax-locations.json') $app -Force
+}
 
 Write-Host '[8/9] Stage installer script…'
 Copy-Item (Join-Path $proj 'installer\FreeAudit.iss') $build -Force

@@ -27,7 +27,21 @@ WizardStyle=modern
 UninstallDisplayName=FreeAudit
 
 [Files]
-Source: "app\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+; Application code and runtime — always replaced on install/upgrade.
+; The per-user files are excluded here and re-added below, because copying them
+; with ignoreversion would wipe somebody's saved Fullbay login and settings every
+; time they reinstall or upgrade.
+Source: "app\*"; DestDir: "{app}"; \
+  Excludes: "config.json,fullbay-credentials.json,vorto-credentials.json,google-credentials.json,users.json,sessions.json"; \
+  Flags: recursesubdirs createallsubdirs ignoreversion
+
+; Per-user files: written ONLY on a first install. An upgrade leaves whatever the
+; person already has. New settings still reach them — settings.js merges
+; config.json over the shipped defaults at runtime.
+Source: "app\config.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
+Source: "app\fullbay-credentials.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
+Source: "app\vorto-credentials.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
+Source: "app\google-credentials.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
 
 [Icons]
 Name: "{userdesktop}\FreeAudit"; Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\freeaudit-launcher.vbs"""; WorkingDir: "{app}"
@@ -41,4 +55,7 @@ Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\freeaudit-launcher.
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\stop-freeaudit.ps1"""; Flags: runhidden; RunOnceId: "stopfa"
 
 [UninstallDelete]
+; Removes the whole folder, INCLUDING each person's saved credentials, accounts
+; and browser session. That is the right behaviour for an uninstall — nobody
+; wants their Fullbay session left on a machine they have finished with.
 Type: filesandordirs; Name: "{app}"
