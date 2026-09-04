@@ -16,6 +16,7 @@ hosted, nothing is exposed to the network, and no credentials ever leave your ma
 | A teammate who just wants to run audits | **[TEAM-INSTALL.md](TEAM-INSTALL.md)** — download `FreeAudit-Setup.exe`, run it, enter your logins |
 | Working on the code | This file + **[HOW-TO-RUN.md](HOW-TO-RUN.md)** |
 | **Hosting FreeAudit / plugging it into another app** | **[INTEGRATION.md](INTEGRATION.md)** — architecture, the multi-tenancy contract, Docker, output schema |
+| **Maintaining the FLSS portal** | **[PORTAL-BRIEF.md](PORTAL-BRIEF.md)** — what the agent will find, what changed, what still needs deciding |
 
 An installed copy **updates its own code on launch**, so teammates never reinstall for a
 code change.
