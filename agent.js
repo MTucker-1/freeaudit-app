@@ -27,6 +27,8 @@
 const { spawn, exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+// Shared with server.js: one audit at a time on this machine.
+const runlock = require('./runlock');
 
 const ROOT = __dirname;
 // Named *credentials* on purpose: this repo is public, and the existing
@@ -219,6 +221,9 @@ async function runJob(job) {
   const child = spawn(process.execPath, args, { cwd: ROOT });
   const childPid = child.pid;
   let cancelled = false;
+  // Hold the machine-wide lock so the local app shows "the portal is running an
+  // audit" and its Run Audit button refuses instead of colliding with us.
+  runlock.acquire({ by: 'FLSS portal', kind: job.kind === 'open' ? 'open' : 'audit', pid: childPid });
 
   // Heartbeat doubles as the cancel channel — the portal can't reach in here,
   // so we ask on every beat whether we've been told to stop.
@@ -249,6 +254,7 @@ async function runJob(job) {
 
   const code = await new Promise(resolve => child.on('close', resolve));
   clearInterval(beat);
+  runlock.release(childPid);
   if (out.trim()) logger.push(out.trim());
 
   let status = cancelled ? 'cancelled' : (code === 0 ? 'success' : 'failed');
@@ -344,6 +350,14 @@ async function main() {
   let warnedNoCreds = false;
   for (;;) {
     let wait = POLL_IDLE_MS;
+
+    // Someone pressed Run Audit in the local app. Claiming now would start a
+    // second Chromium on the same profile and both runs would fail, so wait.
+    const holder = runlock.current();
+    if (holder) {
+      await sleep(POLL_IDLE_MS);
+      continue;
+    }
 
     // Don't claim runs this machine cannot complete.
     if (!fullbayReady()) {

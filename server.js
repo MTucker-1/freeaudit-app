@@ -16,6 +16,7 @@ const path = require('path');
 const { chromium } = require('playwright');
 const { readConfig, writeConfig } = require('./settings');
 const { ensureDataDir } = require('./paths');
+const runlock = require('./runlock');
 const gsheets = require('./gsheets');
 
 // Force-kill a process and all its children (so a stuck audit + its Chromium are fully cleared).
@@ -170,7 +171,17 @@ function broadcast(evt) {
 }
 
 app.get('/api/status', requireAuth, (req, res) => {
-  res.json({ running, startedBy: runStartedBy, kind: runKind, lines: events, reportExists: fs.existsSync(path.join(ROOT, 'audit-report.html')) });
+  // A run started by the portal agent is not `running` here — it is a separate
+  // process — so report the machine-wide lock too.
+  const holder = runlock.current();
+  res.json({
+    running, startedBy: runStartedBy, kind: runKind, lines: events,
+    reportExists: fs.existsSync(path.join(ROOT, 'audit-report.html')),
+    busy: !!holder,
+    busyBy: holder ? holder.by : '',
+    busyKind: holder ? holder.kind : '',
+    busyMessage: holder && !running ? runlock.describe(holder) : '',
+  });
 });
 
 // Health/freshness signals for the home dashboard.
@@ -217,6 +228,17 @@ let runStartedBy = '';
 let runKind = '';
 function startChild(args, res, byName, kind) {
   if (running) return res.status(409).json({ error: 'already running', startedBy: runStartedBy, kind: runKind });
+  /* The portal agent can also be running an audit on this machine, in a process
+   * this one knows nothing about. Both drive the same browser profile, so
+   * starting a second one produces a dead about:blank window and a run that
+   * silently does nothing. Check the machine-wide lock, not just our own flag. */
+  const got = runlock.acquire({ by: byName || 'someone', kind: kind || 'audit' });
+  if (!got.ok) {
+    return res.status(409).json({
+      error: 'already running', startedBy: got.holder.by, kind: got.holder.kind,
+      message: runlock.describe(got.holder), elsewhere: true,
+    });
+  }
   running = true; runStartedBy = byName || 'someone'; runKind = kind || 'audit'; events = [];
   broadcast({ type: 'start', by: runStartedBy, kind: runKind });
   child = spawn(process.execPath, args.map((a, i) => (i === 0 ? path.join(CODE_DIR, a) : a)), { cwd: ROOT, env: { ...process.env, FREEAUDIT_DATA_DIR: ROOT } });
@@ -236,6 +258,7 @@ function startChild(args, res, byName, kind) {
     if (runWatchdog) { clearTimeout(runWatchdog); runWatchdog = null; }
     if (buf.trim()) broadcast({ type: 'log', line: buf.trim() });
     running = false; child = null; runStartedBy = ''; runKind = '';
+    runlock.release();
     broadcast({ type: 'done', code });
   });
   // Safety net: never let a stuck run lock everyone out forever.

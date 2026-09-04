@@ -986,7 +986,9 @@
     $('closeImpact').onclick=closeImpact; $('okImpact').onclick=closeImpact;
     $('impactOverlay').onclick=(e)=>{ if(e.target===$('impactOverlay')) closeImpact(); };
 
-    const busyMsg = async (r) => { const d=await r.json().catch(()=>({})); addLine('Already in use'+(d.startedBy?' — '+d.startedBy+' is running it right now':'')+'. It will free up when they finish (or press Stop).'); };
+    // A run can be held by the portal agent, a separate process on this PC.
+    // The server explains who and what; show that rather than a generic message.
+    const busyMsg = async (r) => { const d=await r.json().catch(()=>({})); addLine(d.message || ('Already in use'+(d.startedBy?' - '+d.startedBy+' is running it right now':'')+'. It will free up when they finish (or press Stop).')); };
     $('run').onclick = async () => { const r=await fetch('/api/run',{method:'POST'}); if(r.status===409) busyMsg(r); };
     $('runOpen').onclick = async () => { const r=await fetch('/api/run-open',{method:'POST'}); if(r.status===409) busyMsg(r); else addLine('Auditing open service orders...'); };
     $('viewOpen').onclick = () => window.open('/open-report','_blank');
@@ -1026,6 +1028,8 @@
     };
 
     fetch('/api/status').then(r=>r.json()).then(s=>{
+      // A portal-triggered run is not OUR child process, so surface it too.
+      if(!s.running && s.busy && s.busyMessage){ addLine(s.busyMessage); }
       if(s.running){ setProg(0, 'In progress…', true); lastKind=s.kind||''; if(s.kind!=='signin'){ resetLiveStats(); showReportState('building'); } }
       if(s.lines&&s.lines.length){ s.lines.forEach(m=>{ if(m.type==='log'){handleLogForProgress(m.line); updateLiveStats(m.line); if(/orders.*findings/i.test(m.line)) showSummary(m.line);} }); }
       setRunning(s.running, s.startedBy, s.kind);
