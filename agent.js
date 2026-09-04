@@ -315,13 +315,49 @@ function claimSingleInstance() {
   return true;
 }
 
+/*
+ * Only claim work this PC can actually do.
+ *
+ * The installer starts an agent on every machine, so a teammate who has
+ * installed FreeAudit but not yet entered their Fullbay login would otherwise
+ * claim a queued audit and fail it — and because a claim is exclusive, that run
+ * is gone rather than passing to a machine that could have done it.
+ *
+ * Until the portal supports targeting a specific host, this is what keeps a
+ * half-configured install from swallowing everyone's runs.
+ */
+function fullbayReady() {
+  try {
+    const p = path.join(ROOT, 'fullbay-credentials.json');
+    if (!fs.existsSync(p)) return false;
+    const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+    return !!(c.username && c.password
+      && !/PUT-YOUR/i.test(c.username) && !/PUT-YOUR/i.test(c.password));
+  } catch (e) { return false; }
+}
+
 async function main() {
   if (!claimSingleInstance()) return;
   say(`FreeAudit agent starting — host "${cfg.host}", portal ${cfg.portalUrl}`);
   say('Polling for queued runs. Leave this window open.');
 
+  let warnedNoCreds = false;
   for (;;) {
     let wait = POLL_IDLE_MS;
+
+    // Don't claim runs this machine cannot complete.
+    if (!fullbayReady()) {
+      if (!warnedNoCreds) {
+        warnedNoCreds = true;
+        say('No Fullbay login saved on this PC — not claiming portal runs.');
+        say('  Open FreeAudit > Settings, enter your Fullbay email and password, and save.');
+        say('  This agent will start picking up runs on its own once they are set.');
+      }
+      await sleep(POLL_IDLE_MS);
+      continue;
+    }
+    if (warnedNoCreds) { warnedNoCreds = false; say('Fullbay login found — now claiming portal runs.'); }
+
     try {
       const { job } = await api('claim', { query: { host: cfg.host } });
       if (job) {
