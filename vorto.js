@@ -12,11 +12,19 @@
  * the request template (vendor ids etc.) from the live page, then query both the
  * resolved and open views with all hide-filters OFF.
  *
- * Matching: a unit passes if it (or its PO's MT) appears among resolved tickets.
+ * MATCHING IS ON THE MT, EXACTLY (corrected 2026-09-03).
  *  - asset.name in the API = the unit (ALMZ…); pid = the ticket MT (MT-…).
- *  - The PO's MT is cleaned first (strip stray ":" / ")" etc., keep MT-XXXX), since
- *    final-invoicing edits sometimes leave extra chars on the Fullbay PO.
- *  - Duplicate tickets per unit are fine: present in "resolved" at all = resolved.
+ *  - The MT on the Fullbay SO decides it. A unit commonly has SEVERAL MTs — one
+ *    resolved, another still open — so "has this unit ever been resolved" is the
+ *    wrong question. Only the MT this order was billed against counts.
+ *  - This used to check the unit FIRST and fall back to the MT, so an order whose
+ *    own MT was still open passed because a different MT on the same unit had
+ *    been closed. That was a false pass on real money.
+ *  - The unit is used only when the order carries no MT at all, and the result
+ *    says so (matchedBy: 'unit').
+ *  - The PO's MT is cleaned first (strip stray ":" / ")" etc.), and both sides are
+ *    compared in canonical form (letters and digits only) so punctuation
+ *    differences never cause a false mismatch.
  */
 const { chromium } = require('playwright');
 const path = require('path');
@@ -84,6 +92,17 @@ async function fetchView(ctx, template, token, view) {
 }
 
 // Index tickets by unit (asset.name) and by MT (pid).
+/*
+ * Canonical form of an MT for comparison: upper case, everything that isn't a
+ * letter or digit removed. So "MT-J6FTV4BO", "mt j6ftv4bo" and "MTJ6FTV4BO" all
+ * compare equal, while two genuinely different MTs never collide. Both sides of
+ * the comparison go through this, so punctuation differences between Fullbay and
+ * the portal can't cause a false mismatch.
+ */
+function mtKey(v) {
+  return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
 function indexTickets(tickets) {
   const byUnit = new Map(); const byPid = new Map();
   for (const t of tickets) {
@@ -92,7 +111,9 @@ function indexTickets(tickets) {
     const status = (t.status && (t.status.displayName || t.status.name)) || '';
     const rec = { unit, pid, status };
     if (unit && !byUnit.has(unit)) byUnit.set(unit, rec);
-    if (pid && !byPid.has(pid)) byPid.set(pid, rec);
+    // Keyed on the canonical MT, not the raw string.
+    const k = mtKey(pid);
+    if (k && !byPid.has(k)) byPid.set(k, rec);
   }
   return { byUnit, byPid };
 }
@@ -143,10 +164,54 @@ async function lookupOrders(items) {
 
     const results = {};
     for (const it of list) {
-      let rec = (it.unit && resolved.byUnit.get(it.unit)) || (it.mt && resolved.byPid.get(it.mt));
-      if (rec) { results[it.key] = { resolved: true, where: 'resolved', status: rec.status || 'Resolved', portalMt: rec.pid || it.mt, matchedBy: (it.unit && resolved.byUnit.has(it.unit)) ? 'unit' : 'mt' }; continue; }
-      rec = (it.unit && open.byUnit.get(it.unit)) || (it.mt && open.byPid.get(it.mt));
-      if (rec) { results[it.key] = { resolved: false, where: 'open', status: rec.status || 'Open', portalMt: rec.pid || it.mt, matchedBy: (it.unit && open.byUnit.has(it.unit)) ? 'unit' : 'mt' }; continue; }
+      /*
+       * The MT on the Fullbay SO is the authority, and matching is EXACT.
+       *
+       * A unit routinely carries several MTs — one resolved, another still open.
+       * Matching on the unit therefore answers the wrong question: it says "has
+       * this trailer ever been resolved", when what matters is whether THIS
+       * order's MT is resolved. The old code checked the unit first, so an order
+       * whose own MT was still open passed because some other MT for the same
+       * unit had been closed.
+       *
+       * So when the SO has an MT we decide on that MT alone and never fall back
+       * to the unit. Unit matching survives only for an order with no MT at all,
+       * and is reported as such (matchedBy: 'unit') so it can be treated as the
+       * weaker evidence it is.
+       */
+      const k = mtKey(it.mt);
+      if (k) {
+        const hit = resolved.byPid.get(k);
+        if (hit) {
+          results[it.key] = { resolved: true, where: 'resolved', status: hit.status || 'Resolved',
+            portalMt: hit.pid || it.mt, matchedBy: 'mt' };
+          continue;
+        }
+        const openHit = open.byPid.get(k);
+        if (openHit) {
+          results[it.key] = { resolved: false, where: 'open', status: openHit.status || 'Open',
+            portalMt: openHit.pid || it.mt, matchedBy: 'mt' };
+          continue;
+        }
+        // This exact MT is in neither view. Not "resolved via the unit" — the MT
+        // the order was billed against simply isn't in the portal.
+        results[it.key] = { resolved: false, where: 'missing', status: '', portalMt: '', matchedBy: '' };
+        continue;
+      }
+
+      // No MT on the order at all — unit is the only thing left to go on.
+      let rec = it.unit && resolved.byUnit.get(it.unit);
+      if (rec) {
+        results[it.key] = { resolved: true, where: 'resolved', status: rec.status || 'Resolved',
+          portalMt: rec.pid || '', matchedBy: 'unit' };
+        continue;
+      }
+      rec = it.unit && open.byUnit.get(it.unit);
+      if (rec) {
+        results[it.key] = { resolved: false, where: 'open', status: rec.status || 'Open',
+          portalMt: rec.pid || '', matchedBy: 'unit' };
+        continue;
+      }
       results[it.key] = { resolved: false, where: 'missing', status: '', portalMt: '', matchedBy: '' };
     }
     return { available: true, results };
@@ -179,7 +244,7 @@ async function signIn(maxMinutes = 10) {
   }
 }
 
-module.exports = { lookupOrders, orderKey, signIn, credsSet, cleanMT };
+module.exports = { lookupOrders, orderKey, signIn, credsSet, cleanMT, mtKey, indexTickets};
 
 // CLI self-test: node vorto.js ALMZ1234DV:MT-XXXX ALMZ5678DV:MT-YYYY  (mt optional)
 if (require.main === module) {
