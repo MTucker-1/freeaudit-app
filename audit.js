@@ -1477,6 +1477,22 @@ function writeJson(results, dupInfo = {}, allPhotos = []) {
 
 const ageInDaysSafe = (t) => { try { return require('./checks').ageInDays(t) || 0; } catch (e) { return 0; } };
 
+/*
+ * The MT on the order, shown where the service writer used to be — at this shop
+ * the writer and the technician are the same person, so listing both said
+ * nothing twice, and the MT is what you need when cross-checking Vorto.
+ *
+ * Shows the tidy MT when the PO parses as one. When it does not, the raw PO is
+ * shown instead rather than a blank, so a malformed value stays visible (Check E
+ * flags it separately).
+ */
+function mtLabel(r) {
+  const raw = String(r.poNumber || '').trim();
+  if (!raw) return ' · <span class="nomt">no MT</span>';
+  const m = raw.toUpperCase().match(/MT-?[A-Z0-9]{4,}/);
+  return ' · MT: ' + esc(m ? m[0] : raw);
+}
+
 function writeHtml(results, dupInfo = {}, openOrders = []) {
   const flagged = results.filter((r) => r.findings.length);
   const totalFindings = results.reduce((n, r) => n + r.findings.length, 0);
@@ -1565,7 +1581,7 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
     return `<div class="so ${sev}" id="${anchorFor(r)}">
       <div class="so-head"><strong>${esc(r.soNumber)}</strong>${scBadge}
         <span class="meta">${esc(r.customerName || '')} ${r.unitNumber ? '· Unit ' + esc(r.unitNumber) : ''}
-          ${techList ? '· Tech: ' + esc(techList) : ''}${r.serviceWriter ? ' · Writer: ' + esc(r.serviceWriter) : ''}</span>
+          ${techList ? '· Tech: ' + esc(techList) : ''}${mtLabel(r)}</span>
         ${sheetBadge}${vortoBadge}
         <a href="${esc(r.url)}" target="_blank">open</a></div>
       ${findingHtml}${notesHtml(r)}${galleryHtml(r)}</div>`;
@@ -1646,6 +1662,7 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
   .oh span{font-size:15px;color:#a16207;background:#fef3c7;border-radius:20px;padding:3px 12px}
   .osub{font-size:12.5px;color:#7b8aa3;margin:0 0 14px}
   .age{font-size:11px;font-weight:700;background:#eef3fa;color:#15356b;border-radius:20px;padding:4px 11px;white-space:nowrap}
+  .nomt{color:#b91c1c;font-weight:700}
   .f{font-size:13px;padding:9px 0;border-top:1px solid #f0f3f8;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
   .f:first-of-type{border-top:none}
   .f .tag{font-size:10.5px;font-weight:800;border-radius:20px;padding:3px 10px;letter-spacing:.03em;text-transform:uppercase;background:#eef2f7;color:#334155}
