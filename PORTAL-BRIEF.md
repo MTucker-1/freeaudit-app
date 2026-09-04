@@ -7,7 +7,7 @@ FreeAudit is now, what your agent will find, and the three things that will bite
 if nobody tells you.
 
 Repo: **https://github.com/MTucker-1/freeaudit-app** (public, code only — every
-secret and all shop data is gitignored). Current version **1.0.7**.
+secret and all shop data is gitignored). Current version **1.0.9**.
 
 ---
 
@@ -23,8 +23,21 @@ field by field:
 - per photo (`photos[]`): `soNumber`, `aiNumber`, `technician`, `hash`, plus `dupInfo`
 
 **Added for you:** `vortoResolved` (bool) and `vortoStatus` (string) on each
-order. Your agent already reads them and they were missing — Vorto is 6 of 17
-blockers on a typical run, so those findings had no supporting state.
+order. Your agent already reads them and they were missing — Vorto is a large
+share of blockers on a typical run, so those findings had no supporting state.
+
+**What `vortoResolved` means changed in 1.0.8, and it matters for how you show
+it.** The lookup used to match on the UNIT first and fall back to the MT. A unit
+routinely carries several MTs — one resolved, another still open — so an order
+whose own MT was still open passed because a different MT on the same trailer had
+been closed. That was a false pass on an order that is not ready to invoice.
+
+It now matches the MT on the SO **exactly**, and nothing else. `vortoResolved`
+therefore answers "is THIS order's MT resolved", not "has this trailer ever been
+resolved". Three outcomes reach you: resolved, open (with the portal's own status
+in `vortoStatus`), and not-in-the-portal-at-all. Orders with no MT are the only
+ones still matched by unit, and the raw result carries `matchedBy: 'unit'` so that
+weaker evidence can be labelled differently if you want to.
 
 **`audit-results.json` is a superset, not the file your patch would have made.**
 It already existed with a `schema: 1` structure (`counts`, `orders[]`) that the
