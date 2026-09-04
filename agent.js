@@ -287,7 +287,36 @@ async function runJob(job) {
 }
 
 /* ---------------------------------------------------------------- poll loop */
+/*
+ * Only one agent per machine. The installer starts one at login, and it is easy
+ * to also launch one by hand — two agents on one PC would both poll, both claim
+ * jobs, and then fight over the single browser profile.
+ */
+function claimSingleInstance() {
+  const pidFile = path.join(ROOT, 'agent.pid');
+  try {
+    if (fs.existsSync(pidFile)) {
+      const old = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10);
+      if (Number.isFinite(old) && old !== process.pid) {
+        try {
+          process.kill(old, 0);          // throws if that pid is gone
+          say(`An agent is already running on this PC (pid ${old}). Exiting.`);
+          return false;
+        } catch (e) { /* stale file from a crash — take over */ }
+      }
+    }
+    fs.writeFileSync(pidFile, String(process.pid), 'utf8');
+    const cleanup = () => { try { fs.unlinkSync(pidFile); } catch (e) { /* ignore */ } };
+    process.on('exit', cleanup);
+    process.on('SIGINT', () => { cleanup(); process.exit(0); });
+  } catch (e) {
+    // A lock problem must not stop the agent doing its job.
+  }
+  return true;
+}
+
 async function main() {
+  if (!claimSingleInstance()) return;
   say(`FreeAudit agent starting — host "${cfg.host}", portal ${cfg.portalUrl}`);
   say('Polling for queued runs. Leave this window open.');
 

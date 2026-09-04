@@ -39,7 +39,7 @@ Write-Host '[5/9] Browser engine (large — please wait)…'
 Copy-Item $pwCache (Join-Path $app 'browsers') -Recurse -Force
 
 Write-Host '[6/9] Launcher + updater…'
-'freeaudit.ps1','update.ps1','freeaudit-launcher.vbs','stop-freeaudit.ps1' |
+'freeaudit.ps1','update.ps1','freeaudit-launcher.vbs','stop-freeaudit.ps1','agent-launcher.vbs' |
   ForEach-Object { Copy-Item (Join-Path $proj "installer\$_") $app -Force }
 
 Write-Host '[7/9] Config, version, update channel, credential templates…'
@@ -68,6 +68,25 @@ if (Test-Path (Join-Path $proj 'google-service-account.json')) {
 # the "Fix Addresses" action has nothing to resolve against.
 if (Test-Path (Join-Path $proj 'tax-locations.json')) {
   Copy-Item (Join-Path $proj 'tax-locations.json') $app -Force
+}
+# Portal agent config. The secret is READ from the local file (gitignored) rather
+# than written here, because this build script IS in the public repo.
+#
+# "host" is deliberately omitted: agent.js falls back to this machine's hostname,
+# so every install identifies itself and an audit queued from the portal is
+# claimed by whichever PC happens to be on.
+$agentSrc = Join-Path $proj 'agent-credentials.json'
+if (Test-Path $agentSrc) {
+  $a = Get-Content $agentSrc -Raw | ConvertFrom-Json
+  if ($a.agentSecret -and $a.agentSecret -ne 'PASTE_SECRET_HERE') {
+    Write-Json (Join-Path $app 'agent-credentials.json') `
+      ('{ "portalUrl": "' + $a.portalUrl + '", "agentSecret": "' + $a.agentSecret + '" }')
+    Write-Host '        portal agent configured (host = each PC name)'
+  } else {
+    Write-Host '        NOTE: agent-credentials.json has no real secret - the agent will not ship configured'
+  }
+} else {
+  Write-Host '        NOTE: no agent-credentials.json - installs will not run the portal agent'
 }
 
 Write-Host '[8/9] Stage installer script…'
