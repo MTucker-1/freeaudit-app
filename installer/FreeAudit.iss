@@ -44,8 +44,10 @@ Source: "app\vorto-credentials.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
 Source: "app\google-credentials.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
 
 [Icons]
-Name: "{userdesktop}\FreeAudit"; Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\freeaudit-launcher.vbs"""; WorkingDir: "{app}"
-Name: "{userprograms}\FreeAudit\FreeAudit"; Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\freeaudit-launcher.vbs"""; WorkingDir: "{app}"
+; IconFilename is required: the shortcut runs wscript.exe, so without it Windows
+; shows the generic script icon rather than the Freedom logo.
+Name: "{userdesktop}\FreeAudit"; Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\freeaudit-launcher.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"
+Name: "{userprograms}\FreeAudit\FreeAudit"; Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\freeaudit-launcher.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"
 Name: "{userprograms}\FreeAudit\Stop FreeAudit"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\stop-freeaudit.ps1"""; WorkingDir: "{app}"
 
 [Run]

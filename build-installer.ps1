@@ -24,6 +24,9 @@ Write-Host '[2/9] App code…'
 # left out of one and not the other).
 Get-ChildItem (Join-Path $proj '*.js') -File | ForEach-Object { Copy-Item $_.FullName $app -Force }
 Copy-Item (Join-Path $proj 'package.json') $app -Force
+# The Freedom logo, used for the desktop and Start-menu shortcuts. Without it
+# Windows falls back to the generic wscript icon.
+Copy-Item (Join-Path $proj 'logo.ico') $app -Force
 Copy-Item (Join-Path $proj 'public') (Join-Path $app 'public') -Recurse -Force
 
 Write-Host '[3/9] node_modules…'
