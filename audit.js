@@ -367,6 +367,26 @@ async function fetchActionItemPhotoUrls(context, aiId) {
   return [...new Set(matches.map((m) => m[1]))];
 }
 
+/*
+ * Photos attached to the SERVICE ORDER rather than to an action item. Same
+ * endpoint as the action-item photos, with tableName=RepairOrder and the
+ * repairOrderId — verified against a live order whose attachment badge said 10
+ * and which returned exactly 10 files.
+ */
+const SO_LEVEL_PHOTO = 'SO';
+
+async function fetchSoPhotoUrls(context, repairOrderId) {
+  if (!repairOrderId) return [];
+  const limit = CONFIG.imageLimit || 50;
+  const url = `${CONFIG.baseUrl}/office/global/editImages.html?classDirectory=workorder&showForCustomer=1`
+    + `&tableName=RepairOrder&primaryKeyId=${repairOrderId}&imageLimit=${limit}&ajax=1`;
+  const resp = await context.request.get(url).catch(() => null);
+  if (!resp || !resp.ok()) return [];
+  const body = await resp.text();
+  const matches = [...body.matchAll(/["'](\/files\/[^"']+?\.(?:jpe?g|png|webp|gif))(?:\?[^"']*)?["']/gi)];
+  return [...new Set(matches.map((m) => m[1]))];
+}
+
 // Fetch the notes/comments on one action item (author, time, text).
 async function fetchActionItemNotes(context, aiId) {
   const url = `${CONFIG.baseUrl}/office/workorder/handleRepairOrderActionItem.html`;
@@ -634,6 +654,27 @@ async function runFull(page, context) {
           for (const s of saved) {
             if (!s) continue;
             allPhotos.push({ soNumber: so.soNumber, aiNumber: s.ai.number || s.ai.id, technician: s.ai.technician || '', url: s.url, hash: s.hash, localFile: s.localFile });
+            photoCt++;
+          }
+
+          /* Photos attached to the ORDER as a whole, not to any action item —
+           * the inspection set (front, back, sides, grease points, landing gear,
+           * mudflaps, tyres) normally lives here. These were previously only
+           * COUNTED, never fetched, so they never appeared in the report and the
+           * duplicate-photo check could not see one reused across orders. */
+          const soUrls = await fetchSoPhotoUrls(context, r.repairOrderId);
+          const soSaved = await mapLimit(soUrls, 6, async (u) => {
+            const s = await fetchAndStorePhoto(context, u, photosDir);
+            return s ? { url: u, hash: s.hash, localFile: s.localFile } : null;
+          });
+          for (const s of soSaved) {
+            if (!s) continue;
+            allPhotos.push({
+              soNumber: so.soNumber,
+              aiNumber: SO_LEVEL_PHOTO,       // marks it as belonging to the order
+              technician: '',                  // order-level photos have no tech
+              url: s.url, hash: s.hash, localFile: s.localFile,
+            });
             photoCt++;
           }
         }
@@ -1511,7 +1552,9 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
             <img src="photos/${esc(p.localFile)}" loading="lazy" onclick="lb('photos/${esc(p.localFile)}')" title="${esc(cap)}">
             ${isDup ? '<span class="dupbadge">REUSED</span>' : ''}</div>`;
       }).join('');
-      return `<div class="aiphotos"><span class="ailbl">AI ${esc(ai)}</span>${thumbs}</div>`;
+      // Order-level photos aren't an action item, so they get their own label.
+      const lbl = ai === SO_LEVEL_PHOTO ? 'Order photos' : ('AI ' + esc(ai));
+      return `<div class="aiphotos"><span class="ailbl">${lbl}</span>${thumbs}</div>`;
     }).join('');
     return `<details class="gallery"><summary>Photos (${r.photos.length})</summary>${groups}</details>`;
   };
@@ -2024,6 +2067,51 @@ async function runEstimateProbe(page, context) {
   log('\nWrote estimate-dump.txt and estimate-view.png');
 }
 
+
+/* ----------------------------------------------------------------------------
+ * SO-PHOTO PROBE (READ-ONLY) — node audit.js sophotos [SO or repairOrderId]
+ *
+ * Action-item photos come from editImages.html with
+ * tableName=RepairOrderActionItem. Photos attached to the ORDER as a whole are
+ * only counted today (the #roImageButtonBadge number), never fetched — so they
+ * are missing from the gallery and invisible to the duplicate-photo check.
+ * This finds which tableName returns them.
+ * -------------------------------------------------------------------------- */
+async function runSoPhotosProbe(page, context) {
+  if (!(await ensureListLoaded(page))) { log('Not signed into Fullbay — aborting.'); return; }
+  let id = (process.argv[3] || '').trim();
+  await showAllRows(page);
+  const rows = await readListRows(page);
+  if (!id) {
+    const first = rows.find((r) => r.repairOrderId);
+    id = first && first.repairOrderId;
+    log(`Using ${first && first.soNumber} (id ${id})`);
+  } else if (/^so-?\d+$/i.test(id) || /^\d{1,6}$/.test(id)) {
+    const want = id.replace(/^so-?/i, '');
+    const hit = rows.find((r) => String(r.soNumber || '').replace(/^so-?/i, '') === want && r.repairOrderId);
+    if (!hit) { log('SO not found in the list.'); return; }
+    id = hit.repairOrderId;
+  }
+  await openOrderById(page, id);
+  await sleep(2000);
+  const badge = await page.$eval('#roImageButtonBadge', (e) => e.textContent.trim()).catch(() => '0');
+  log(`\nSO-level attachment badge says: ${badge}`);
+
+  const limit = CONFIG.imageLimit || 50;
+  const candidates = ['RepairOrder', 'RepairOrderImage', 'WorkOrder', 'RepairOrderAttachment'];
+  log('\nTrying tableName values against editImages.html:');
+  for (const t of candidates) {
+    const url = `${CONFIG.baseUrl}/office/global/editImages.html?classDirectory=workorder&showForCustomer=1`
+      + `&tableName=${t}&primaryKeyId=${id}&imageLimit=${limit}&ajax=1`;
+    const resp = await context.request.get(url).catch(() => null);
+    if (!resp || !resp.ok()) { log(`  ${t.padEnd(24)} HTTP ${resp ? resp.status() : 'no response'}`); continue; }
+    const body = await resp.text();
+    const files = [...new Set([...body.matchAll(/["'](\/files\/[^"']+?\.(?:jpe?g|png|webp|gif))(?:\?[^"']*)?["']/gi)]
+      .map((m) => m[1]))];
+    log(`  ${t.padEnd(24)} HTTP ${resp.status()}  ${body.length} bytes  ${files.length} photo file(s)`);
+    files.slice(0, 3).forEach((f) => log(`      ${f}`));
+  }
+}
 
 /* ----------------------------------------------------------------------------
  * OPEN SERVICE ORDERS — the second half of the audit.
@@ -2836,6 +2924,7 @@ if (require.main === module) (async () => {
     else if (MODE === 'estimate') await runEstimateProbe(page, context);
     else if (MODE === 'parts') await runPartsProbe(page, context);
     else if (MODE === 'opensos') await runOpenSosProbe(page, context);
+    else if (MODE === 'sophotos') await runSoPhotosProbe(page, context);
     else if (MODE === 'open') await runOpenOnly(page, context);
     else if (MODE === 'addrmodal') await runAddrModalProbe(page, context);
     else if (MODE === 'fixaddr') await runFixAddr(page, context);
