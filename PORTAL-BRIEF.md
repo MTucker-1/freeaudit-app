@@ -132,7 +132,52 @@ match that order's labour location.
 
 ---
 
-## 5. Still needed from you
+## 5. Putting FreeAudit on the dashboard as a tile
+
+FreeAudit runs on each person's own PC and serves its UI at
+**`http://localhost:4477`**. There is no shared URL — `localhost` correctly
+resolves to whoever is looking at the dashboard, on their own Fullbay login.
+
+Two ways to link it, and the second is better:
+
+**Open it (only works if FreeAudit is already running):**
+
+```html
+<a href="http://localhost:4477" target="_blank" rel="noopener noreferrer">FreeAudit</a>
+```
+
+**Start it (works even when FreeAudit is closed):**
+
+```html
+<a href="freeaudit://open">FreeAudit</a>
+```
+
+The installer registers a `freeaudit://` URL protocol under HKCU. Clicking it
+starts the engine if it isn't running and opens the app window. This is the only
+way a web page can launch a local application, and it is verified working from a
+cold start.
+
+Three rules:
+
+1. **Link, don't iframe.** The dashboard is HTTPS and FreeAudit is HTTP. A
+   top-level navigation to `localhost` is allowed; embedding it in an iframe is
+   blocked as mixed content and renders an empty panel. (If you ever do want it
+   embedded, say so — the session cookie is `sameSite: 'lax'` and would also need
+   changing, which weakens CSRF protection and should be a deliberate decision.)
+2. **Don't health-check it from dashboard JavaScript.** A `fetch()` to
+   `http://localhost:4477` from an HTTPS page is blocked by mixed-content rules
+   even though the link itself works. Probing it will always look offline, so
+   don't grey the tile out based on one.
+3. **`freeaudit://` only exists where FreeAudit is installed.** On a machine
+   without it, nothing happens. Worth a line of copy under the tile: *"Opens
+   FreeAudit on this computer."*
+
+`4477` is configurable per install (`webPort` in `config.json`) but nobody has
+changed it.
+
+---
+
+## 6. Still needed from you
 
 - **The `AUDIT_AGENT_SECRET` value.** `agent-credentials.json` exists on the host
   with `"agentSecret": "PASTE_SECRET_HERE"`. The agent starts, reaches the portal

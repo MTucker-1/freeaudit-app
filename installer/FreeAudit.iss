@@ -50,6 +50,20 @@ Name: "{userdesktop}\FreeAudit"; Filename: "{win}\System32\wscript.exe"; Paramet
 Name: "{userprograms}\FreeAudit\FreeAudit"; Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\freeaudit-launcher.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"
 Name: "{userprograms}\FreeAudit\Stop FreeAudit"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\stop-freeaudit.ps1"""; WorkingDir: "{app}"
 
+[Registry]
+; Registers the freeaudit:// URL protocol, so a link on the FLSS dashboard can
+; START FreeAudit on this PC rather than only reaching it when it already runs.
+; A web page cannot launch a local program any other way.
+;
+; HKCU, so no admin rights are needed and it stays scoped to this user.
+; uninsdeletekey removes the whole protocol on uninstall.
+Root: HKCU; Subkey: "Software\Classes\freeaudit"; ValueType: string; ValueName: ""; ValueData: "URL:FreeAudit Protocol"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\freeaudit"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\freeaudit\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\logo.ico,0"
+; The launcher ignores the URL it is handed; it starts the engine if needed and
+; opens the app window, which is the whole point of the link.
+Root: HKCU; Subkey: "Software\Classes\freeaudit\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{win}\System32\wscript.exe"" ""{app}\freeaudit-launcher.vbs"" ""%1"""
+
 [Run]
 Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\freeaudit-launcher.vbs"""; Description: "Launch FreeAudit now"; Flags: nowait postinstall skipifsilent
 
