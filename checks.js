@@ -112,7 +112,13 @@ const NO_PART_NEEDED_PATTERNS = [
   /\b(not|did ?n'?t|do ?n'?t|does ?n'?t|with ?out)\b[^.]{0,18}\bneed(ed)?\b[^.]{0,12}\bparts?\b/i,
   /\bparts?\b[^.]{0,8}\bn\/?a\b|\bn\/?a\b[^.]{0,8}\bparts?\b/i,         // "parts n/a"
   /\b(part|parts) not needed\b/i,
-  /\bshop suppl(y|ies)\b/i,                                            // "used shop supplies"
+  // Parts taken from stock rather than ordered in. The wording varies by tech —
+  // "shop supplies", "truck supplies", "parts from truck supplies", "off the van" —
+  // so match the named stores AND the general "from/used/out of ... supplies"
+  // phrasing. Matching only "shop supplies" missed SO-11776's "Parts from truck
+  // supplies" and flagged a repair that was correctly parted out.
+  /\b(shop|truck|van|service\s*truck|stock|inventory)\s*suppl(y|ies)\b/i,
+  /\b(from|used|using|off|out\s+of|had)\b[^.]{0,25}\bsuppl(y|ies)\b/i,
 ];
 function notesJustifyNoParts(notes) {
   if (!notes || !notes.length) return false;
