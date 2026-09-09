@@ -2897,8 +2897,12 @@ if (require.main === module) (async () => {
   // empty about:blank window. Handle that REACTIVELY — try to launch, and only
   // clear leftovers if Playwright actually reports the conflict. Killing
   // pre-emptively on every run risks killing the browser this run depends on.
+  // Signing in is the one thing a person does BY HAND in this browser, so it is
+  // always visible — a headless sign-in window cannot be typed into, and the run
+  // would just sit there until it timed out.
+  const mustBeVisible = (MODE === 'login');
   const launchOpts = {
-    headless: !!CONFIG.headless,
+    headless: mustBeVisible ? false : !!CONFIG.headless,
     viewport: null,
     args: ['--start-maximized'],
   };
