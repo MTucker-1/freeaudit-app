@@ -303,6 +303,7 @@
   .sched-msg{font-size:12.5px;color:var(--dim)}
   .sched-msg.err{color:var(--red,#c0392b);font-weight:600}
   .sched-msg.ok{color:var(--navy-2);font-weight:600}
+  .sched-msg.warn{color:#b45309;font-weight:600}
   .sched-status{margin-top:14px;padding-top:13px;border-top:1px solid var(--line);font-size:12.5px;color:var(--dim);line-height:1.6}
   .sched-status b{color:inherit}
   .sched-status.off{opacity:.55}
@@ -1073,7 +1074,7 @@
     let schedDirty=false;
 
     // Both add controls run this, so they can never drift apart.
-    function addSchedRow(){ schedDirty=true; schedRuns.push({time:'08:00',kinds:['audit']}); renderSched(); }
+    function addSchedRow(){ schedTouched(); schedRuns.push({time:'08:00',kinds:['audit']}); renderSched(); }
 
     function renderSched(){
       const tb=$('schedRows');
@@ -1096,9 +1097,9 @@
       +'<tr class="sched-addrow"><td colspan="3">'
       +'<button type="button" id="schedAddRow" class="sched-addbtn">+ Add a time</button></td></tr>';
       tb.querySelector('#schedAddRow').onclick=addSchedRow;
-      tb.querySelectorAll('.sched-time').forEach(el=>el.onchange=e=>{ schedDirty=true; schedRuns[+e.target.dataset.i].time=e.target.value; });
+      tb.querySelectorAll('.sched-time').forEach(el=>el.onchange=e=>{ schedTouched(); schedRuns[+e.target.dataset.i].time=e.target.value; });
       tb.querySelectorAll('.sched-kind').forEach(el=>el.onchange=e=>{
-        schedDirty=true;
+        schedTouched();
         const run=schedRuns[+e.target.dataset.i], k=e.target.dataset.k;
         const on=new Set(run.kinds);
         if(e.target.checked) on.add(k); else on.delete(k);
@@ -1107,7 +1108,7 @@
         $('schedMsg').textContent = run.kinds.length ? '' : 'Tick at least one service for '+run.time+'.';
         $('schedMsg').className = run.kinds.length ? 'sched-msg' : 'sched-msg err';
       });
-      tb.querySelectorAll('.sched-del').forEach(el=>el.onclick=e=>{ schedDirty=true; schedRuns.splice(+e.target.dataset.i,1); renderSched(); });
+      tb.querySelectorAll('.sched-del').forEach(el=>el.onclick=e=>{ schedTouched(); schedRuns.splice(+e.target.dataset.i,1); renderSched(); });
     }
 
     function renderSchedStatus(d){
@@ -1115,7 +1116,9 @@
       if(d.supported===false){ box.className='sched-status'; box.innerHTML='Automatic runs need Windows Task Scheduler, which this machine does not have.'; return; }
       const tasks=d.tasks||[];
       box.className='sched-status'+($('schedOn').checked?'':' off');
-      if(!tasks.length){ box.innerHTML='Nothing is scheduled with Windows right now.'; return; }
+      // Nothing registered says nothing: the On tickbox already shows that, and
+      // repeating it read as an error when it was simply switched off.
+      if(!tasks.length){ box.innerHTML=''; return; }
       // Windows is the source of truth here — show what it will actually do.
       const next=tasks.map(t=>t.next).filter(Boolean).sort()[0];
       let h='<b>'+tasks.length+'</b> scheduled task'+(tasks.length===1?'':'s')+' registered with Windows.';
@@ -1131,6 +1134,7 @@
       // is slow or fails — an empty panel with no way to add a time reads as a
       // broken feature.
       schedDirty=false;
+      $('schedMsg').className='sched-msg'; $('schedMsg').textContent='';
       renderSched();
       // Fast call (tasks=0) fills the editor. Anything the person has already
       // typed WINS: this reply used to arrive seconds later and silently wipe a
@@ -1163,7 +1167,13 @@
     }
 
     $('schedAdd').onclick=addSchedRow;
-    $('schedOn').onchange=()=>{ schedDirty=true; $('schedStatus').className='sched-status'+($('schedOn').checked?'':' off'); };
+    function schedTouched(){
+      schedDirty=true;
+      $('schedStatus').className='sched-status'+($('schedOn').checked?'':' off');
+      const m=$('schedMsg');
+      if(!m.classList.contains('err')){ m.className='sched-msg warn'; m.textContent='Not saved yet — press Save.'; }
+    }
+    $('schedOn').onchange=schedTouched;
 
     const closeImpact=()=>$('impactOverlay').classList.remove('open');
     $('openImpact').onclick=()=>{ loadImpact(); $('impactOverlay').classList.add('open'); };
