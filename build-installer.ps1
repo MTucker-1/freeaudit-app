@@ -39,7 +39,8 @@ Write-Host '[5/9] Browser engine (large — please wait)…'
 Copy-Item $pwCache (Join-Path $app 'browsers') -Recurse -Force
 
 Write-Host '[6/9] Launcher + updater…'
-'freeaudit.ps1','update.ps1','freeaudit-launcher.vbs','stop-freeaudit.ps1','agent-launcher.vbs' |
+'freeaudit.ps1','update.ps1','freeaudit-launcher.vbs','stop-freeaudit.ps1','agent-launcher.vbs',
+'sync-schedule.ps1','scheduled-launcher.vbs' |
   ForEach-Object { Copy-Item (Join-Path $proj "installer\$_") $app -Force }
 
 Write-Host '[7/9] Config, version, update channel, credential templates…'

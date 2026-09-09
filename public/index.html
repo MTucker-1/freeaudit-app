@@ -268,6 +268,39 @@
   .sc-chips{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
   .sc-chip{font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;background:var(--navy-soft);color:var(--navy);white-space:nowrap}
   .sc-empty{padding:26px;text-align:center;color:var(--faint);font-size:14px}
+  /* Automatic runs — lives inside the Settings modal, saved by its Save button */
+  .sched-sec{margin-top:22px;padding-top:18px;border-top:1px solid var(--line)}
+  /* "+ Add a time" lives in the header, not under the table: after the table it
+     moved further down with every row added, and dropped below the panel's
+     visible area — present, but impossible to click. Here its position never
+     changes, however many times are listed. */
+  .sched-head{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+  .sched-head>div:first-child{flex:1;min-width:180px}
+  .sched-title{font-size:13px;font-weight:800}
+  .sched-sub{font-size:12px;color:var(--dim);margin-top:2px;line-height:1.45}
+  .sched-tbl{width:100%;border-collapse:collapse;margin-top:4px}
+  .sched-tbl th{text-align:left;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--faint);padding:0 10px 8px 0;border-bottom:1px solid var(--line)}
+  .sched-tbl td{padding:9px 10px 9px 0;border-bottom:1px solid var(--line);vertical-align:middle}
+  .sched-tbl tr:last-child td{border-bottom:0}
+  .sched-tbl input[type=time],.sched-tbl select{font:inherit;font-size:14px;padding:7px 9px;border:1px solid var(--line);
+    border-radius:9px;background:#fff;color:inherit}
+  .sched-tbl input[type=time]{width:120px;font-variant-numeric:tabular-nums}
+  .sched-del{border:0;background:none;color:var(--faint);font-size:19px;line-height:1;cursor:pointer;padding:2px 6px;border-radius:6px}
+  .sched-del:hover{background:var(--red-soft,#fdeaea);color:var(--red,#c0392b)}
+  .sched-empty{padding:18px 0;color:var(--faint);font-size:13px}
+  .sched-addrow td{border-bottom:0!important;padding:10px 0 2px!important}
+  .sched-addbtn{width:100%;padding:10px;border:1px dashed var(--line);border-radius:10px;background:none;
+    color:var(--navy-2);font:inherit;font-size:13px;font-weight:700;cursor:pointer}
+  .sched-addbtn:hover{border-color:var(--navy-2);background:var(--navy-soft)}
+  .sched-actions{display:flex;align-items:center;gap:10px;margin-top:14px}
+  .sched-spacer{flex:1}
+  .sched-msg{font-size:12.5px;color:var(--dim)}
+  .sched-msg.err{color:var(--red,#c0392b);font-weight:600}
+  .sched-msg.ok{color:var(--navy-2);font-weight:600}
+  .sched-status{margin-top:14px;padding-top:13px;border-top:1px solid var(--line);font-size:12.5px;color:var(--dim);line-height:1.6}
+  .sched-status b{color:inherit}
+  .sched-status.off{opacity:.55}
   .sc-back{border:0;background:none;color:var(--navy-2);font-weight:700;font-size:13px;cursor:pointer;padding:0;margin-bottom:10px}
   .sc-sec{font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin:26px 0 6px;padding-bottom:8px;border-bottom:1px solid var(--line)}
   /* One block per check: title + count, its own full-width bar, then the
@@ -321,11 +354,19 @@
   .overlay{position:fixed;inset:0;background:rgba(7,24,44,.55);backdrop-filter:blur(3px);
     display:none;align-items:center;justify-content:center;z-index:40;padding:20px}
   .overlay.open{display:flex}
+  /* Freeze the page underneath while a panel is open, so the wheel can never
+     scroll the background out from under an open modal. */
+  body:has(.overlay.open){overflow:hidden}
+  /* Every modal scrolls inside itself. Without the height cap a tall panel
+     (Settings, once Automatic runs was added) simply overflowed the viewport
+     and the wheel scrolled the PAGE BEHIND it instead — the bottom of the panel
+     was unreachable. overscroll-behavior stops the scroll chaining to the page
+     once the modal hits its end. */
   .modal{width:100%;max-width:520px;background:#fff;border-radius:20px;box-shadow:var(--shadow-lg);
-    padding:26px 28px;animation:rise .25s}
+    padding:26px 28px;animation:rise .25s;max-height:88vh;overflow:auto;overscroll-behavior:contain}
   .modal h3{margin:0 0 4px;font-size:19px;font-weight:800}
   .modal .lead{margin:0 0 20px;font-size:13px;color:var(--dim)}
-  .modal-lg{max-width:700px;max-height:88vh;overflow:auto}
+  .modal-lg{max-width:700px}
   .about-body h4{font-size:14px;font-weight:800;color:var(--navy);margin:20px 0 7px}
   .about-body h4:first-child{margin-top:6px}
   .about-body p{font-size:13.5px;line-height:1.6;color:var(--dim);margin:0 0 6px}
@@ -362,7 +403,12 @@
   .sgrid .full{grid-column:1/-1}
   .toggle{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:500;padding:6px 0}
   .toggle input{width:18px;height:18px;accent-color:var(--red)}
-  .modal-actions{margin-top:22px;display:flex;justify-content:flex-end;gap:10px;align-items:center}
+  /* Sticky so Save is reachable without scrolling to the very bottom of a long
+     panel. The negative margins + padding let the white background span the
+     modal's full padded width, so rows scroll under it cleanly. */
+  .modal-actions{margin:22px -28px -26px;padding:16px 28px;display:flex;justify-content:flex-end;
+    gap:10px;align-items:center;position:sticky;bottom:-26px;background:#fff;
+    border-top:1px solid var(--line);border-radius:0 0 20px 20px;z-index:2}
   .saved{color:var(--ok);font-weight:600;font-size:13px;opacity:0;transition:.2s}
   .saved.show{opacity:1}
   .x{margin-left:auto;border:0;background:transparent;font-size:22px;color:var(--faint);cursor:pointer;line-height:1}
@@ -514,6 +560,7 @@
           <iframe id="report" class="hidden"></iframe>
         </div>
       </section>
+
     </main>
   </div>
 
@@ -539,6 +586,26 @@
         <label class="toggle full"><input type="checkbox" id="checkDuplicatePhotos"> Detect duplicate photos across orders (slower)</label>
         <label class="toggle full"><input type="checkbox" id="checkSheetCompletion"> Check “complete in sheet” tracker</label>
       </div>
+
+      <div class="sched-sec">
+        <div class="sched-head">
+          <div>
+            <div class="sched-title">Automatic runs</div>
+            <div class="sched-sub">Run the audit by itself at set times. This PC wakes from sleep for it.</div>
+          </div>
+          <button id="schedAdd" type="button" class="btn btn-ghost btn-sm2">+ Add a time</button>
+          <label class="toggle" style="margin:0;white-space:nowrap"><input type="checkbox" id="schedOn"> On</label>
+        </div>
+        <table class="sched-tbl">
+          <thead><tr><th>Time</th><th>What it runs</th><th></th></tr></thead>
+          <tbody id="schedRows"></tbody>
+        </table>
+        <div class="sched-actions">
+          <span id="schedMsg" class="sched-msg"></span>
+        </div>
+        <div id="schedStatus" class="sched-status"></div>
+      </div>
+
       <div class="modal-actions">
         <span id="saved" class="saved">Saved ✓</span>
         <button class="btn" id="cancelSettings">Cancel</button>
@@ -790,7 +857,7 @@
         '<ul><li>'+missing.join('</li><li>')+'</li></ul>'+
         '<button class="btn btn-navy" id="setupOpenSettings">Open Settings</button>';
       el.classList.remove('hidden');
-      $('setupOpenSettings').onclick = () => $('settingsOverlay').classList.add('open');
+      $('setupOpenSettings').onclick = () => { $('settingsOverlay').classList.add('open'); loadSched(); };
     }
 
 
@@ -986,6 +1053,97 @@
     $('scoreWeeks').onchange=loadScore;
     $('closeScore').onclick=closeScore; $('okScore').onclick=closeScore;
     $('scoreOverlay').onclick=(e)=>{ if(e.target===$('scoreOverlay')) closeScore(); };
+    /* Automatic runs — the schedule is stored in config.json and turned into
+       real Windows scheduled tasks on save. Nothing fires from this page; a
+       timer here would only run while the browser is open. */
+    const SCHED_KINDS=[['audit','Ready-to-Invoice audit'],['open','Open SO audit'],['both','Both, one after the other']];
+    let schedRuns=[];
+    // Set the moment the person edits anything, so a slow in-flight load
+    // can never overwrite what they just typed.
+    let schedDirty=false;
+
+    // Both add controls run this, so they can never drift apart.
+    function addSchedRow(){ schedDirty=true; schedRuns.push({time:'08:00',kind:'audit'}); renderSched(); }
+
+    function renderSched(){
+      const tb=$('schedRows');
+      // The add row is appended in BOTH states — with no times set it is the
+      // only way forward, so returning early here would strand an empty panel.
+      const empty=!schedRuns.length
+        ? '<tr><td colspan="3"><div class="sched-empty">No times set. Add one and the audit will run by itself.</div></td></tr>' : '';
+      tb.innerHTML=empty+schedRuns.map((r,i)=>
+        '<tr><td><input type="time" data-i="'+i+'" class="sched-time" value="'+r.time+'"></td>'
+        +'<td><select data-i="'+i+'" class="sched-kind">'
+        +SCHED_KINDS.map(([v,l])=>'<option value="'+v+'"'+(r.kind===v?' selected':'')+'>'+l+'</option>').join('')
+        +'</select></td>'
+        +'<td style="text-align:right"><button class="sched-del" data-i="'+i+'" title="Remove">&times;</button></td></tr>'
+      ).join('')
+      // An add row directly beneath the last time, where the eye already is.
+      // The header button does the same thing; this one is simply where people
+      // look for it.
+      +'<tr class="sched-addrow"><td colspan="3">'
+      +'<button type="button" id="schedAddRow" class="sched-addbtn">+ Add a time</button></td></tr>';
+      tb.querySelector('#schedAddRow').onclick=addSchedRow;
+      tb.querySelectorAll('.sched-time').forEach(el=>el.onchange=e=>{ schedDirty=true; schedRuns[+e.target.dataset.i].time=e.target.value; });
+      tb.querySelectorAll('.sched-kind').forEach(el=>el.onchange=e=>{ schedDirty=true; schedRuns[+e.target.dataset.i].kind=e.target.value; });
+      tb.querySelectorAll('.sched-del').forEach(el=>el.onclick=e=>{ schedDirty=true; schedRuns.splice(+e.target.dataset.i,1); renderSched(); });
+    }
+
+    function renderSchedStatus(d){
+      const box=$('schedStatus');
+      if(d.supported===false){ box.className='sched-status'; box.innerHTML='Automatic runs need Windows Task Scheduler, which this machine does not have.'; return; }
+      const tasks=d.tasks||[];
+      box.className='sched-status'+($('schedOn').checked?'':' off');
+      if(!tasks.length){ box.innerHTML='Nothing is scheduled with Windows right now.'; return; }
+      // Windows is the source of truth here — show what it will actually do.
+      const next=tasks.map(t=>t.next).filter(Boolean).sort()[0];
+      let h='<b>'+tasks.length+'</b> scheduled task'+(tasks.length===1?'':'s')+' registered with Windows.';
+      if(next){ const d2=new Date(next); if(!isNaN(d2)) h+=' Next run <b>'+d2.toLocaleString([], {weekday:'short', hour:'numeric', minute:'2-digit'})+'</b>.'; }
+      const last=(d.history||[]).slice(-1)[0];
+      if(last) h+='<br>Last: '+last.replace(/</g,'&lt;');
+      h+='<br>The PC must be signed in — it will wake from sleep, but not from being shut down.';
+      box.innerHTML=h;
+    }
+
+    function loadSched(){
+      // Draw straight away so the controls are usable even if the status call
+      // is slow or fails — an empty panel with no way to add a time reads as a
+      // broken feature.
+      schedDirty=false;
+      renderSched();
+      // Fast call (tasks=0) fills the editor. Anything the person has already
+      // typed WINS: this reply used to arrive seconds later and silently wipe a
+      // time they had just added.
+      fetch('/api/schedule?tasks=0').then(r=>r.json()).then(d=>{
+        if(schedDirty) return;
+        const s=d.schedule||{};
+        $('schedOn').checked=!!s.enabled;
+        schedRuns=(s.runs||[]).map(r=>({time:r.time,kind:r.kind||'audit'}));
+        renderSched();
+      }).catch(()=>{ $('schedStatus').innerHTML='Could not read the schedule.'; });
+      // Slow call: what Windows actually has. Only ever touches the status line.
+      fetch('/api/schedule').then(r=>r.json()).then(renderSchedStatus).catch(()=>{});
+    }
+
+    /* Saved by the Settings Save button, not a button of its own. Returns true
+       when the schedule was accepted, so Settings can report a real failure
+       instead of flashing "Saved ✓" over a schedule Windows rejected. */
+    async function saveSched(){
+      const msg=$('schedMsg'); msg.className='sched-msg'; msg.textContent='';
+      try{
+        const r=await fetch('/api/schedule',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({enabled:$('schedOn').checked, wake:true, runs:schedRuns})});
+        const d=await r.json();
+        if(!r.ok){ msg.className='sched-msg err'; msg.textContent=(d.errors||['Could not save the schedule.'])[0]; return false; }
+        schedDirty=false; schedRuns=d.schedule.runs; renderSched(); renderSchedStatus(d);
+        if(d.synced===false){ msg.className='sched-msg err'; msg.textContent='Windows would not accept it: '+(d.output||'unknown error'); return false; }
+        return true;
+      }catch(e){ msg.className='sched-msg err'; msg.textContent='Could not save the schedule.'; return false; }
+    }
+
+    $('schedAdd').onclick=addSchedRow;
+    $('schedOn').onchange=()=>{ schedDirty=true; $('schedStatus').className='sched-status'+($('schedOn').checked?'':' off'); };
+
     const closeImpact=()=>$('impactOverlay').classList.remove('open');
     $('openImpact').onclick=()=>{ loadImpact(); $('impactOverlay').classList.add('open'); };
     $('closeImpact').onclick=closeImpact; $('okImpact').onclick=closeImpact;
@@ -1055,7 +1213,9 @@
       $('vortoPassword').value=''; $('vortoPassword').placeholder = c.vortoCredsSet ? '•••••••• (saved — leave blank to keep)' : 'enter password';
       $('checkDuplicatePhotos').checked=c.checkDuplicatePhotos!==false; $('checkSheetCompletion').checked=c.checkSheetCompletion!==false;
     });
-    const openS=()=>{ $('menu').classList.remove('open'); $('settingsOverlay').classList.add('open'); };
+    // Re-read on every open so the panel shows what Windows currently has, not
+    // a stale copy from whenever the page was first loaded.
+    const openS=()=>{ $('menu').classList.remove('open'); $('settingsOverlay').classList.add('open'); loadSched(); };
     const closeS=()=>$('settingsOverlay').classList.remove('open');
     $('openSettings').onclick=openS; $('closeSettings').onclick=closeS; $('cancelSettings').onclick=closeS;
     $('settingsOverlay').onclick=(e)=>{ if(e.target===$('settingsOverlay')) closeS(); };
@@ -1086,6 +1246,10 @@
     $('closeUsers').onclick=closeUsers; $('okUsers').onclick=closeUsers;
     $('usersOverlay').onclick=(e)=>{ if(e.target===$('usersOverlay')) closeUsers(); };
     $('saveSettings').onclick=async()=>{
+      // Schedule first: it is the one that can be rejected (a bad time, or
+      // Windows refusing it). If it fails, keep the modal open with the reason
+      // showing rather than closing on a half-saved change.
+      const schedOk=await saveSched();
       await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
         maxOrders:Number($('maxOrders').value)||0, sheetFile:$('sheetFile').value.trim(), sheetYear:$('sheetYear').value.trim(),
         signupCode:$('signupCode').value.trim(),
@@ -1094,6 +1258,7 @@
         vortoUser:$('vortoUser').value.trim(), vortoPassword:$('vortoPassword').value,
         checkDuplicatePhotos:$('checkDuplicatePhotos').checked, checkSheetCompletion:$('checkSheetCompletion').checked })});
       $('fullbayPassword').value=''; $('googleApiKey').value=''; $('vortoPassword').value='';
+      if(!schedOk) return; // the reason is already showing next to the schedule
       const s=$('saved'); s.classList.add('show'); setTimeout(()=>{s.classList.remove('show'); closeS();},900);
     };
   }

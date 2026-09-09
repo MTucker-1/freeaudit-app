@@ -18,6 +18,7 @@ const { readConfig, writeConfig } = require('./settings');
 const { ensureDataDir } = require('./paths');
 const runlock = require('./runlock');
 const gsheets = require('./gsheets');
+const schedule = require('./schedule');
 
 // Force-kill a process and all its children (so a stuck audit + its Chromium are fully cleared).
 function killTree(pid) { if (pid) { try { exec('taskkill /PID ' + pid + ' /T /F'); } catch (e) { /* ignore */ } } }
@@ -303,6 +304,27 @@ app.post('/api/cancel', requireAuth, (req, res) => {
 });
 
 /* ---------------- Settings ---------------- */
+/* ---------------- automatic runs (Windows Task Scheduler) ---------------- */
+// Reports what WINDOWS has registered alongside what we saved, because the two
+// can disagree — a sync can fail, or someone can delete a task by hand.
+// tasks=0 skips the Windows query. Reading registered tasks shells out to
+// PowerShell and takes seconds; the editor must not wait on it, or its late
+// reply lands on top of times the person has already started typing.
+app.get('/api/schedule', requireAuth, async (req, res) => {
+  res.json({
+    schedule: schedule.read(),
+    tasks: req.query.tasks === '0' ? [] : await schedule.installed(),
+    history: schedule.history(),
+    supported: process.platform === 'win32',
+  });
+});
+
+app.post('/api/schedule', requireAuth, async (req, res) => {
+  const result = await schedule.save(req.body || {});
+  if (!result.ok) return res.status(400).json(result);
+  res.json({ ...result, tasks: await schedule.installed() });
+});
+
 app.get('/api/config', requireAuth, (req, res) => {
   const c = readConfig();
   res.json({
@@ -403,7 +425,15 @@ app.get('/report-pdf', requireAuth, async (req, res) => {
 app.use('/photos', requireAuth, express.static(path.join(ROOT, 'photos')));
 
 /* ---------------- UI (public static) ---------------- */
-app.use(express.static(path.join(CODE_DIR, 'public')));
+/* The app window is a Chrome/Edge --app window, which caches the page hard. An
+ * update would then land on disk and be served correctly while the person kept
+ * looking at the old UI — a new feature simply "not there", with no way to tell
+ * that from a bug. HTML must always be revalidated; the rest may cache. */
+app.use(express.static(path.join(CODE_DIR, 'public'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+  },
+}));
 
 // Desktop install: loopback, so nothing is exposed to the network. Hosted (PORT
 // set by the platform): 0.0.0.0, or the platform's router can't reach us.

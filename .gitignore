@@ -69,3 +69,7 @@ address-fixes.json
 estimate-dump.txt
 estimate-view.png
 so-*.png
+
+# Scheduled-run history and UI probe screenshots — local runtime output
+schedule-log.txt
+settings-probe.png

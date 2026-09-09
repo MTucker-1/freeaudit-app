@@ -60,6 +60,12 @@ const DEFAULTS = {
   // Also read every spreadsheet shared with the service account, not just the
   // links above. Set false to use the configured links only.
   autoDiscoverSheets: true,
+  // Automatic runs. Edited in the app (Automatic runs), turned into real
+  // Windows scheduled tasks by installer/sync-schedule.ps1 — a timer in this
+  // process would only fire while the app is open and could not wake a sleeping
+  // PC. Times are 24-hour local time; kind is audit | open | both.
+  //   { enabled: true, wake: true, runs: [{ time: '08:00', kind: 'audit' }] }
+  schedule: { enabled: false, wake: true, runs: [] },
 };
 
 let warned = false;

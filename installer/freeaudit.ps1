@@ -10,7 +10,15 @@ $port = 4477
 $node = Join-Path $dir 'node.exe'
 $pidFile = Join-Path $dir 'server.pid'
 
-function Server-Listening { [bool](Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue) }
+# Only OUR server counts. Checking the port alone was not enough: anything else
+# bound to 4477 on another address (a Tailscale serve proxy, say) made this
+# report "already running", so the engine was never started and the app window
+# opened on a dead URL — "can't reach this page" with no way to recover by
+# clicking the icon again.
+function Server-Listening {
+  [bool](Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue |
+    Where-Object { $_.LocalAddress -in @('127.0.0.1', '0.0.0.0', '::', '::1') })
+}
 function Stop-Server {
   if (Test-Path $pidFile) {
     $sp = Get-Content $pidFile -ErrorAction SilentlyContinue
