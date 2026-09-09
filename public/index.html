@@ -283,8 +283,13 @@
     color:var(--faint);padding:0 10px 8px 0;border-bottom:1px solid var(--line)}
   .sched-tbl td{padding:9px 10px 9px 0;border-bottom:1px solid var(--line);vertical-align:middle}
   .sched-tbl tr:last-child td{border-bottom:0}
-  .sched-tbl input[type=time],.sched-tbl select{font:inherit;font-size:14px;padding:7px 9px;border:1px solid var(--line);
+  .sched-tbl input[type=time]{font:inherit;font-size:14px;padding:7px 9px;border:1px solid var(--line);
     border-radius:9px;background:#fff;color:inherit}
+  .sched-kinds{display:flex;flex-wrap:wrap;gap:6px 14px}
+  .sched-kchk{display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;white-space:nowrap}
+  .sched-kchk input{margin:0;cursor:pointer}
+  .sched-write{font-size:9.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
+    color:#b45309;background:#fef3c7;border-radius:4px;padding:1px 5px;margin-left:5px}
   .sched-tbl input[type=time]{width:120px;font-variant-numeric:tabular-nums}
   .sched-del{border:0;background:none;color:var(--faint);font-size:19px;line-height:1;cursor:pointer;padding:2px 6px;border-radius:6px}
   .sched-del:hover{background:var(--red-soft,#fdeaea);color:var(--red,#c0392b)}
@@ -1056,14 +1061,19 @@
     /* Automatic runs — the schedule is stored in config.json and turned into
        real Windows scheduled tasks on save. Nothing fires from this page; a
        timer here would only run while the browser is open. */
-    const SCHED_KINDS=[['audit','Ready-to-Invoice audit'],['open','Open SO audit'],['both','Both, one after the other'],['fixaddresses','Fix Addresses (writes to Fullbay)']];
+    // Canonical order — also the order a run executes them in: read-only work
+    // first, the one that WRITES to Fullbay last.
+    const SCHED_KINDS=[['audit','Ready-to-Invoice'],['open','Open SOs'],['fixaddresses','Fix Addresses']];
+    const SCHED_HINT={fixaddresses:'Changes Bill To / Ship To in Fullbay'};
+    // Older saved schedules stored one service per time.
+    const schedKindsOf=(r)=>Array.isArray(r.kinds)?r.kinds:(r.kind==='both'?['audit','open']:[r.kind||'audit']);
     let schedRuns=[];
     // Set the moment the person edits anything, so a slow in-flight load
     // can never overwrite what they just typed.
     let schedDirty=false;
 
     // Both add controls run this, so they can never drift apart.
-    function addSchedRow(){ schedDirty=true; schedRuns.push({time:'08:00',kind:'audit'}); renderSched(); }
+    function addSchedRow(){ schedDirty=true; schedRuns.push({time:'08:00',kinds:['audit']}); renderSched(); }
 
     function renderSched(){
       const tb=$('schedRows');
@@ -1073,9 +1083,11 @@
         ? '<tr><td colspan="3"><div class="sched-empty">No times set. Add one and the audit will run by itself.</div></td></tr>' : '';
       tb.innerHTML=empty+schedRuns.map((r,i)=>
         '<tr><td><input type="time" data-i="'+i+'" class="sched-time" value="'+r.time+'"></td>'
-        +'<td><select data-i="'+i+'" class="sched-kind">'
-        +SCHED_KINDS.map(([v,l])=>'<option value="'+v+'"'+(r.kind===v?' selected':'')+'>'+l+'</option>').join('')
-        +'</select></td>'
+        +'<td><div class="sched-kinds">'
+        +SCHED_KINDS.map(([v,l])=>'<label class="sched-kchk"'+(SCHED_HINT[v]?' title="'+SCHED_HINT[v]+'"':'')+'>'
+          +'<input type="checkbox" class="sched-kind" data-i="'+i+'" data-k="'+v+'"'+(r.kinds.includes(v)?' checked':'')+'> '
+          +l+(v==='fixaddresses'?'<span class="sched-write">writes</span>':'')+'</label>').join('')
+        +'</div></td>'
         +'<td style="text-align:right"><button class="sched-del" data-i="'+i+'" title="Remove">&times;</button></td></tr>'
       ).join('')
       // An add row directly beneath the last time, where the eye already is.
@@ -1085,7 +1097,16 @@
       +'<button type="button" id="schedAddRow" class="sched-addbtn">+ Add a time</button></td></tr>';
       tb.querySelector('#schedAddRow').onclick=addSchedRow;
       tb.querySelectorAll('.sched-time').forEach(el=>el.onchange=e=>{ schedDirty=true; schedRuns[+e.target.dataset.i].time=e.target.value; });
-      tb.querySelectorAll('.sched-kind').forEach(el=>el.onchange=e=>{ schedDirty=true; schedRuns[+e.target.dataset.i].kind=e.target.value; });
+      tb.querySelectorAll('.sched-kind').forEach(el=>el.onchange=e=>{
+        schedDirty=true;
+        const run=schedRuns[+e.target.dataset.i], k=e.target.dataset.k;
+        const on=new Set(run.kinds);
+        if(e.target.checked) on.add(k); else on.delete(k);
+        // Keep canonical order rather than click order, so it always runs the same way.
+        run.kinds=SCHED_KINDS.map(([v])=>v).filter(v=>on.has(v));
+        $('schedMsg').textContent = run.kinds.length ? '' : 'Tick at least one service for '+run.time+'.';
+        $('schedMsg').className = run.kinds.length ? 'sched-msg' : 'sched-msg err';
+      });
       tb.querySelectorAll('.sched-del').forEach(el=>el.onclick=e=>{ schedDirty=true; schedRuns.splice(+e.target.dataset.i,1); renderSched(); });
     }
 
@@ -1118,7 +1139,7 @@
         if(schedDirty) return;
         const s=d.schedule||{};
         $('schedOn').checked=!!s.enabled;
-        schedRuns=(s.runs||[]).map(r=>({time:r.time,kind:r.kind||'audit'}));
+        schedRuns=(s.runs||[]).map(r=>({time:r.time,kinds:schedKindsOf(r)}));
         renderSched();
       }).catch(()=>{ $('schedStatus').innerHTML='Could not read the schedule.'; });
       // Slow call: what Windows actually has. Only ever touches the status line.
@@ -1135,7 +1156,7 @@
           body:JSON.stringify({enabled:$('schedOn').checked, wake:true, runs:schedRuns})});
         const d=await r.json();
         if(!r.ok){ msg.className='sched-msg err'; msg.textContent=(d.errors||['Could not save the schedule.'])[0]; return false; }
-        schedDirty=false; schedRuns=d.schedule.runs; renderSched(); renderSchedStatus(d);
+        schedDirty=false; schedRuns=d.schedule.runs.map(r=>({time:r.time,kinds:schedKindsOf(r)})); renderSched(); renderSchedStatus(d);
         if(d.synced===false){ msg.className='sched-msg err'; msg.textContent='Windows would not accept it: '+(d.output||'unknown error'); return false; }
         return true;
       }catch(e){ msg.className='sched-msg err'; msg.textContent='Could not save the schedule.'; return false; }

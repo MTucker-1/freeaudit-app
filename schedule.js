@@ -17,7 +17,11 @@ const path = require('path');
 const { readConfig, writeConfig } = require('./settings');
 const { dataPath } = require('./paths');
 
-const KINDS = ['audit', 'open', 'both', 'fixaddresses'];
+// Canonical order, and the order a run executes them in: read-only work first,
+// the one that WRITES to Fullbay last.
+const KINDS = ['audit', 'open', 'fixaddresses'];
+// 'both' was a single-choice value before a time could carry several services.
+const LEGACY = { both: ['audit', 'open'] };
 const MAX_RUNS = 12; // more than a dozen a day is a mistake, not a schedule
 
 const DEFAULT = { enabled: false, wake: true, runs: [] };
@@ -32,6 +36,17 @@ function read() {
   };
 }
 
+/** Accept either the new `kinds` array or an older single `kind`. */
+function normKinds(raw) {
+  let list = Array.isArray(raw && raw.kinds) ? raw.kinds : null;
+  if (!list) {
+    const k = raw && raw.kind;
+    list = LEGACY[k] ? LEGACY[k].slice() : [k];
+  }
+  // Filter through KINDS so the result is deduped, valid and always in run order.
+  return KINDS.filter((k) => list.includes(k));
+}
+
 /** Reject anything Windows would choke on, and sort so the UI reads in order. */
 function normalise(input) {
   const errors = [];
@@ -42,9 +57,11 @@ function normalise(input) {
     const time = String((raw && raw.time) || '').trim();
     if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(time)) { errors.push(`"${time || '(blank)'}" is not a valid time — use 24-hour HH:MM, e.g. 08:00 or 15:30.`); continue; }
     if (seen.has(time)) { errors.push(`${time} is listed twice.`); continue; }
+    const kinds = normKinds(raw);
+    // A time with nothing ticked would register a task that does nothing.
+    if (!kinds.length) { errors.push(`${time} has no services ticked — choose at least one.`); continue; }
     seen.add(time);
-    const kind = KINDS.includes(raw && raw.kind) ? raw.kind : 'audit';
-    runs.push({ time, kind });
+    runs.push({ time, kinds });
   }
   runs.sort((a, b) => a.time.localeCompare(b.time));
 
@@ -117,4 +134,4 @@ function history(limit = 40) {
   } catch (e) { return []; }
 }
 
-module.exports = { read, save, sync, installed, history, normalise, KINDS, MAX_RUNS };
+module.exports = { read, save, sync, installed, history, normalise, normKinds, KINDS, MAX_RUNS };

@@ -14,7 +14,8 @@
  * going at 12:00 means the 12:00 run has nothing to add. Exit 0 so Task
  * Scheduler's history reads "ran, nothing to do" rather than showing a failure.
  *
- * Usage:  node run-scheduled.js [audit|open|both|fixaddresses]
+ * Usage:  node run-scheduled.js audit           (one service)
+ *         node run-scheduled.js audit,open      (several, run in order)
  */
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -22,9 +23,16 @@ const path = require('path');
 const runlock = require('./runlock');
 const { dataPath } = require('./paths');
 
-// fixaddresses is the only one that WRITES to Fullbay; the rest are read-only.
-const KINDS = { audit: [], open: ['open'], both: null, fixaddresses: ['fixaddresses'] }; // both = audit then open
-const kind = (process.argv[2] || 'audit').toLowerCase();
+// One time can carry several services, passed as a comma list ("audit,open").
+// Order here is the order they run in: read-only first, the Fullbay WRITE last.
+const ORDER = ['audit', 'open', 'fixaddresses'];
+const MODE  = { audit: [], open: ['open'], fixaddresses: ['fixaddresses'] };
+const LABEL = { audit: 'Ready-to-Invoice audit', open: 'Open-SO audit', fixaddresses: 'estimate address fix' };
+const LEGACY = { both: ['audit', 'open'] };  // pre-checkbox schedules
+
+const requested = (process.argv[2] || 'audit').toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
+const expanded = requested.flatMap((k) => LEGACY[k] || [k]);
+const kinds = ORDER.filter((k) => expanded.includes(k));
 const LOG = dataPath('schedule-log.txt');
 
 function log(line) {
@@ -42,15 +50,16 @@ function log(line) {
 }
 
 /** Run one audit pass to completion. Resolves with the exit code. */
-function runPass(args, label) {
+function runPass(kind) {
+  const args = MODE[kind];
+  const label = LABEL[kind];
   return new Promise((resolve) => {
     log(`Starting ${label}…`);
     const child = spawn(process.execPath, [path.join(__dirname, 'audit.js'), ...args], {
       cwd: dataPath('.'),
       env: { ...process.env, FREEAUDIT_DATA_DIR: dataPath('.') },
     });
-    const lockKind = args[0] === 'open' ? 'open' : args[0] === 'fixaddresses' ? 'fixaddresses' : 'audit';
-    const got = runlock.acquire({ by: 'Scheduled run', kind: lockKind, pid: child.pid });
+    const got = runlock.acquire({ by: 'Scheduled run', kind, pid: child.pid });
     if (!got.ok) {
       // Lost a race with a run that started in the last moment.
       child.kill();
@@ -68,8 +77,8 @@ function runPass(args, label) {
 }
 
 (async () => {
-  if (!(kind in KINDS)) {
-    log(`Unknown run type "${kind}" — expected audit, open, both or fixaddresses. Nothing run.`);
+  if (!kinds.length) {
+    log(`Unknown run type "${process.argv[2] || ''}" — expected any of ${ORDER.join(', ')} (comma separated). Nothing run.`);
     process.exit(0); // a bad argument must not look like a failed audit
   }
 
@@ -81,14 +90,7 @@ function runPass(args, label) {
     process.exit(0);
   }
 
-  if (kind === 'both') {
-    await runPass([], 'Ready-to-Invoice audit');
-    await runPass(['open'], 'Open-SO audit');
-  } else {
-    const label = kind === 'open' ? 'Open-SO audit'
-      : kind === 'fixaddresses' ? 'estimate address fix'
-        : 'Ready-to-Invoice audit';
-    await runPass(KINDS[kind], label);
-  }
+  // Sequential, never parallel: they all drive the same browser profile.
+  for (const k of kinds) await runPass(k);
   process.exit(0);
 })();

@@ -67,12 +67,20 @@ $made = 0
 foreach ($run in $sched.runs) {
   $time = [string]$run.time
   if ($time -notmatch '^([01]\d|2[0-3]):([0-5]\d)$') { Write-Output "skipped bad time '$time'"; continue }
-  $kind = [string]$run.kind
-  if ($kind -notin @('audit', 'open', 'both', 'fixaddresses')) { $kind = 'audit' }
+  # One time can carry several services. `kinds` is the current shape; `kind` is
+  # the older single value, still read so an existing schedule keeps working.
+  $valid = @('audit', 'open', 'fixaddresses')
+  if ($run.kinds) { $kinds = @($run.kinds) }
+  elseif ($run.kind -eq 'both') { $kinds = @('audit', 'open') }
+  else { $kinds = @([string]$run.kind) }
+  # Filter through $valid so the order is canonical: read-only first, write last.
+  $kinds = @($valid | Where-Object { $kinds -contains $_ })
+  if (-not $kinds) { Write-Output "skipped $time - no valid services"; continue }
 
-  $name = "$prefix $($time.Replace(':','-')) $kind"
+  $arg  = $kinds -join ','
+  $name = "$prefix $($time.Replace(':','-')) $($kinds -join '+')"
   $action = New-ScheduledTaskAction -Execute 'wscript.exe' `
-    -Argument ('"{0}" {1}' -f $vbs, $kind) -WorkingDirectory $appDir
+    -Argument ('"{0}" {1}' -f $vbs, $arg) -WorkingDirectory $appDir
   $trigger = New-ScheduledTaskTrigger -Daily -At $time
 
   try {
@@ -81,11 +89,11 @@ foreach ($run in $sched.runs) {
     # start it in session 0 where the browser cannot appear.
     Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger `
       -Settings $settings -RunLevel Limited `
-      -User $env:USERNAME -Description "FreeAudit scheduled $kind run at $time" | Out-Null
-    Write-Output "scheduled $time  $kind"
+      -User $env:USERNAME -Description "FreeAudit scheduled run at $time : $arg" | Out-Null
+    Write-Output "scheduled $time  $arg"
     $made++
   } catch {
-    Write-Output ("FAILED {0} {1}: {2}" -f $time, $kind, $_.Exception.Message)
+    Write-Output ("FAILED {0} {1}: {2}" -f $time, $arg, $_.Exception.Message)
   }
 }
 Write-Output "$made task(s) active"
