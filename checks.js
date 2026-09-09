@@ -35,6 +35,39 @@ function isShopSupply(note) {
   return SHOP_SUPPLY_NOTES.some((k) => n.indexOf(k) > -1);
 }
 
+/*
+ * Repairs that are pure LABOUR. Metal is heated and straightened, a bracket is
+ * welded, something is realigned or tightened — nothing is consumed, so a tech
+ * marking No Parts is correct rather than forgetful. SO-11784's "Landing gear
+ * pads bent" was straightened with heat and had no part and no explaining note,
+ * so nothing else in the audit could tell it apart from a forgotten part.
+ *
+ * Regexes, not substrings: "heat" must not match "heater", and "bend" must not
+ * match "bender".
+ */
+const LABOUR_ONLY_REPAIRS = [
+  /\bstraighten(ed|ing)?\b/i,
+  /\bbent\b|\bbend(ing)?\b/i,
+  /\bweld(ed|ing|s)?\b/i,
+  /\b(re)?heat(ed|ing)?\b/i,
+  /\b(re)?align(ed|ing|ment)?\b/i,
+  /\badjust(ed|ing|ment)?\b/i,
+  /\btighten(ed|ing)?\b|\btorqu(e|ed|ing)\b/i,
+  /\breseat(ed)?\b|\bre-?secure(d)?\b|\bre-?wir(e|ed|ing)\b/i,
+  /\blubricat(e|ed|ion)\b|\bgreas(e|ed|ing)\b/i,
+  /\bclean(ed|ing)?\b/i,
+];
+
+// ...unless the same note also says a part went in. "Bent bracket - replaced"
+// consumes a part however the complaint was worded.
+const PART_FITTED_RE = /\b(replac(e|ed|ing|ement)|install(ed|ing)?|new\s+\w+|swap(ped)?|fitted)\b/i;
+
+function isLabourOnlyRepair(note) {
+  const n = note || '';
+  if (PART_FITTED_RE.test(n)) return false;
+  return LABOUR_ONLY_REPAIRS.some((re) => re.test(n));
+}
+
 // "R/R" = repair-or-replace. These often legitimately need NO part (rewire,
 // disconnect, weld — e.g. HINGE BUTT), so they're exempt from the "No Parts"
 // check (B). Matches R/R, R\R, R&R, "R / R", etc.
@@ -211,6 +244,8 @@ function runAudit(so, opts = {}) {
     // wasn't needed (e.g. "no parts needed", "part not needed").
     if (ai.noParts && ai.actualHours > 0 && cls.isRepair && !cls.isInspection
         && !isShopSupply(ai.originalNote) && !isRR(ai.originalNote) && !notesJustifyNoParts(ai.notes)
+        // Heating and straightening bent metal, welding, realigning: labour only.
+        && !isLabourOnlyRepair(ai.originalNote)
         && !siblingCarriesParts(so, ai)
         // A tyre-pressure check reads as a repair only because "tire" is a repair
         // keyword. It consumes no parts, so it must not be flagged for missing them.
@@ -239,7 +274,7 @@ function runAudit(so, opts = {}) {
 }
 
 module.exports = {
-  classify, runAudit, isServiceCall, isRR, isShopSupply, siblingCarriesParts, normService,
+  classify, runAudit, isServiceCall, isRR, isShopSupply, isLabourOnlyRepair, siblingCarriesParts, normService,
   isZeroHourService, ZERO_HOUR_SERVICES, SHOP_SUPPLY_NOTES,
   inspectionCoveredBySoPhotos, INSPECTION_SO_PHOTO_MIN, INSP_KW, REP_KW,
 };
@@ -324,6 +359,7 @@ function runOpenAudit(so, opts = {}) {
     if (ai.noParts && cls.isRepair && !cls.isInspection
         && !isRR(ai.originalNote) && !isShopSupply(ai.originalNote)
         && !isZeroHourService(ai.originalNote) && !notesJustifyNoParts(ai.notes)
+        && !isLabourOnlyRepair(ai.originalNote)
         && !siblingCarriesParts(so, ai)) {
       findings.push({
         check: 'O5', severity: 'warning', technician: tech,
