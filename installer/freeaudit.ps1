@@ -2,6 +2,10 @@
 # 1) self-updates the app code from the update channel (fail-safe),
 # 2) starts the local engine hidden (if not already running),
 # 3) opens FreeAudit in its own app window.
+#
+# -EngineOnly does 1 and 2 but not 3. The Startup shortcut uses it so the engine
+# is back after a reboot without an app window appearing at every login.
+param([switch]$EngineOnly)
 $ErrorActionPreference = 'SilentlyContinue'
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 Set-Location $dir
@@ -39,7 +43,26 @@ if ($updated -eq 'updated') { Stop-Server }
 # 2) Make sure the engine is running.
 if (-not (Server-Listening)) { Start-Server }
 
+# 2b) Make sure the engine comes back after a reboot. The installer writes this
+# shortcut, but update.ps1 only syncs FILES — so an already-installed copy would
+# never get it. Creating it here means existing installs heal themselves on the
+# next launch instead of waiting for a reinstall.
+$startupLnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'FreeAudit Engine.lnk'
+if (-not (Test-Path $startupLnk) -and (Test-Path (Join-Path $dir 'engine-launcher.vbs'))) {
+  try {
+    $ws = New-Object -ComObject WScript.Shell
+    $sc = $ws.CreateShortcut($startupLnk)
+    $sc.TargetPath       = Join-Path $env:SystemRoot 'System32\wscript.exe'
+    $sc.Arguments        = '"' + (Join-Path $dir 'engine-launcher.vbs') + '"'
+    $sc.WorkingDirectory = $dir
+    $sc.IconLocation     = Join-Path $dir 'logo.ico'
+    $sc.Description      = 'Starts the FreeAudit engine at login (no window)'
+    $sc.Save()
+  } catch { }  # a missing startup shortcut must never stop FreeAudit opening
+}
+
 # 3) Open the app window (no address bar — looks like a desktop app).
+if ($EngineOnly) { return }
 $url = "http://localhost:$port/"
 $edge = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 $chrome = "C:\Program Files\Google\Chrome\Application\chrome.exe"

@@ -54,6 +54,10 @@ Name: "{userprograms}\FreeAudit\Stop FreeAudit"; Filename: "powershell.exe"; Par
 ; picked up by whichever PC is switched on rather than depending on one person's
 ; machine. It runs hidden and exits quietly if no agent-credentials.json is present.
 Name: "{userstartup}\FreeAudit Agent"; Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\agent-launcher.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"
+; The web app must come back after a reboot too. Without this only the agent
+; restarted, and opening FreeAudit failed on a freshly restarted PC until
+; someone clicked the desktop icon. -EngineOnly: no browser window at login.
+Name: "{userstartup}\FreeAudit Engine"; Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\engine-launcher.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"
 
 [Registry]
 ; Registers the freeaudit:// URL protocol, so a link on the FLSS dashboard can
