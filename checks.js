@@ -23,8 +23,9 @@ function classify(note) {
 const SERVICE_CALL_RE = /service\s*call\s*[-(]?\s*(in|out)\b[\s-]*(of\s*)?hours?/i;
 function isServiceCall(note) { return SERVICE_CALL_RE.test(note || ''); }
 
-// Services billed as shop supplies (not charged for parts) — exempt from the
-// "No Parts but billed repair labor" check (B). Add phrases here as needed.
+// Services billed as shop supplies. There is nothing to photograph and no part
+// to charge for, so these are exempt from BOTH the parts check (B) and the photo
+// checks (A, and O6/O7 on open orders). Add phrases here as needed.
 // Matching is case-insensitive substring, so "hand rubber" covers
 // "5F - HAND RUBBERS/SEALS  R\R  BOTH" regardless of spacing.
 const SHOP_SUPPLY_NOTES = ['hand rubber'];
@@ -173,7 +174,9 @@ function runAudit(so, opts = {}) {
     // Check A — photos. A repair should have BOTH a before and an after photo,
     // so repair items need at least 2. Any Ready/Invoiced item with zero photos
     // is always flagged.
-    if (invReady) {
+    // Fitting hand rubbers/seals leaves nothing meaningful to photograph, so a
+    // shop-supply item is never flagged for missing photos.
+    if (invReady && !isShopSupply(ai.originalNote)) {
       if (ai.photoCount === 0) {
         // An inspection item whose photos live on the SO as a whole is fine.
         if (!(cls.isInspection && inspectionCoveredBySoPhotos(so, soPhotoMin))) {
@@ -230,8 +233,8 @@ function runAudit(so, opts = {}) {
 }
 
 module.exports = {
-  classify, runAudit, isServiceCall, isRR, siblingCarriesParts, normService,
-  isZeroHourService, ZERO_HOUR_SERVICES,
+  classify, runAudit, isServiceCall, isRR, isShopSupply, siblingCarriesParts, normService,
+  isZeroHourService, ZERO_HOUR_SERVICES, SHOP_SUPPLY_NOTES,
   inspectionCoveredBySoPhotos, INSPECTION_SO_PHOTO_MIN, INSP_KW, REP_KW,
 };
 
@@ -324,8 +327,9 @@ function runOpenAudit(so, opts = {}) {
     }
 
     // O6 / O7 — photos. Same expectation as a finished order: something for any
-    // item, before AND after for a repair.
-    if (ai.photoCount === 0) {
+    // item, before AND after for a repair. Shop supplies are exempt here too.
+    if (isShopSupply(ai.originalNote)) { /* nothing to photograph */ }
+    else if (ai.photoCount === 0) {
       findings.push({
         check: 'O6', severity: 'warning', technician: tech,
         title: 'No photos on ' + label,
