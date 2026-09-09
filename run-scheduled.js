@@ -14,7 +14,7 @@
  * going at 12:00 means the 12:00 run has nothing to add. Exit 0 so Task
  * Scheduler's history reads "ran, nothing to do" rather than showing a failure.
  *
- * Usage:  node run-scheduled.js [audit|open|both]
+ * Usage:  node run-scheduled.js [audit|open|both|fixaddresses]
  */
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -22,7 +22,8 @@ const path = require('path');
 const runlock = require('./runlock');
 const { dataPath } = require('./paths');
 
-const KINDS = { audit: [], open: ['open'], both: null }; // both = audit then open
+// fixaddresses is the only one that WRITES to Fullbay; the rest are read-only.
+const KINDS = { audit: [], open: ['open'], both: null, fixaddresses: ['fixaddresses'] }; // both = audit then open
 const kind = (process.argv[2] || 'audit').toLowerCase();
 const LOG = dataPath('schedule-log.txt');
 
@@ -48,7 +49,8 @@ function runPass(args, label) {
       cwd: dataPath('.'),
       env: { ...process.env, FREEAUDIT_DATA_DIR: dataPath('.') },
     });
-    const got = runlock.acquire({ by: 'Scheduled run', kind: args[0] === 'open' ? 'open' : 'audit', pid: child.pid });
+    const lockKind = args[0] === 'open' ? 'open' : args[0] === 'fixaddresses' ? 'fixaddresses' : 'audit';
+    const got = runlock.acquire({ by: 'Scheduled run', kind: lockKind, pid: child.pid });
     if (!got.ok) {
       // Lost a race with a run that started in the last moment.
       child.kill();
@@ -67,7 +69,7 @@ function runPass(args, label) {
 
 (async () => {
   if (!(kind in KINDS)) {
-    log(`Unknown run type "${kind}" — expected audit, open or both. Nothing run.`);
+    log(`Unknown run type "${kind}" — expected audit, open, both or fixaddresses. Nothing run.`);
     process.exit(0); // a bad argument must not look like a failed audit
   }
 
@@ -83,7 +85,10 @@ function runPass(args, label) {
     await runPass([], 'Ready-to-Invoice audit');
     await runPass(['open'], 'Open-SO audit');
   } else {
-    await runPass(KINDS[kind], kind === 'open' ? 'Open-SO audit' : 'Ready-to-Invoice audit');
+    const label = kind === 'open' ? 'Open-SO audit'
+      : kind === 'fixaddresses' ? 'estimate address fix'
+        : 'Ready-to-Invoice audit';
+    await runPass(KINDS[kind], label);
   }
   process.exit(0);
 })();

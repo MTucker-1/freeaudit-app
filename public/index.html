@@ -1056,7 +1056,7 @@
     /* Automatic runs — the schedule is stored in config.json and turned into
        real Windows scheduled tasks on save. Nothing fires from this page; a
        timer here would only run while the browser is open. */
-    const SCHED_KINDS=[['audit','Ready-to-Invoice audit'],['open','Open SO audit'],['both','Both, one after the other']];
+    const SCHED_KINDS=[['audit','Ready-to-Invoice audit'],['open','Open SO audit'],['both','Both, one after the other'],['fixaddresses','Fix Addresses (writes to Fullbay)']];
     let schedRuns=[];
     // Set the moment the person edits anything, so a slow in-flight load
     // can never overwrite what they just typed.

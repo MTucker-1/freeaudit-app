@@ -68,7 +68,7 @@ foreach ($run in $sched.runs) {
   $time = [string]$run.time
   if ($time -notmatch '^([01]\d|2[0-3]):([0-5]\d)$') { Write-Output "skipped bad time '$time'"; continue }
   $kind = [string]$run.kind
-  if ($kind -notin @('audit', 'open', 'both')) { $kind = 'audit' }
+  if ($kind -notin @('audit', 'open', 'both', 'fixaddresses')) { $kind = 'audit' }
 
   $name = "$prefix $($time.Replace(':','-')) $kind"
   $action = New-ScheduledTaskAction -Execute 'wscript.exe' `

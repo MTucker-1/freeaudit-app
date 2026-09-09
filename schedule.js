@@ -17,7 +17,7 @@ const path = require('path');
 const { readConfig, writeConfig } = require('./settings');
 const { dataPath } = require('./paths');
 
-const KINDS = ['audit', 'open', 'both'];
+const KINDS = ['audit', 'open', 'both', 'fixaddresses'];
 const MAX_RUNS = 12; // more than a dozen a day is a mistake, not a schedule
 
 const DEFAULT = { enabled: false, wake: true, runs: [] };
