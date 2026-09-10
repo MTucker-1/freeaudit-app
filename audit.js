@@ -1747,9 +1747,20 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
     background:rgba(255,255,255,.12);color:#fff;transition:background .15s}
   .lbnav:hover{background:rgba(255,255,255,.26)}
   .lbnav:disabled{opacity:.22;cursor:default}
-  #lbclose{position:absolute;top:16px;right:20px;width:38px;height:38px;border-radius:50%;border:0;cursor:pointer;
-    font-size:22px;line-height:1;background:rgba(255,255,255,.12);color:#fff}
-  #lbclose:hover{background:rgba(255,255,255,.26)}
+  #lbclose,#lbfull{position:absolute;top:16px;width:38px;height:38px;border-radius:50%;border:0;cursor:pointer;
+    font-size:20px;line-height:1;background:rgba(255,255,255,.12);color:#fff}
+  #lbclose{right:20px;font-size:22px}
+  #lbfull{right:66px}
+  #lbclose:hover,#lbfull:hover{background:rgba(255,255,255,.26)}
+  #lbimg{cursor:zoom-in}
+  /* Full screen: give the photo the room, keep the descriptor panel and the
+     arrows exactly where they were so stepping through still works. */
+  #lbov:fullscreen{padding:16px;background:#06121f}
+  #lbov:fullscreen #lbfig{max-width:80vw;max-height:96vh}
+  #lbov:fullscreen #lbimg{max-width:80vw;max-height:94vh;border-radius:4px;cursor:zoom-out}
+  #lbov:fullscreen #lbinfo{width:230px}
+  #lbov:-webkit-full-screen{padding:16px;background:#06121f}
+  #lbov:-webkit-full-screen #lbimg{max-width:80vw;max-height:94vh;cursor:zoom-out}
   @media (max-width:760px){
     #lbov{flex-wrap:wrap}
     #lbinfo{width:100%;text-align:center;order:3}
@@ -1805,9 +1816,10 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
       <div class="lbai"   id="lbai"></div>
       <div class="lbcount" id="lbcount"></div>
       <div class="lbdup"  id="lbdup"></div>
-      <div class="lbhint">&#8592; &#8594; to move &nbsp;·&nbsp; Esc to close</div>
+      <div class="lbhint">&#8592; &#8594; to move &nbsp;·&nbsp; F for full screen &nbsp;·&nbsp; Esc to close</div>
     </aside>
     <button id="lbnext" class="lbnav" title="Next (right arrow)">&#10095;</button>
+    <button id="lbfull" title="Full screen (F, or double-click the photo)">&#9974;</button>
     <button id="lbclose" title="Close (Esc)">&times;</button>
   </div>
   <script>
@@ -1873,11 +1885,40 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
       LB.i = n;
       lbShow();
     }
-    function lbClose(){ document.getElementById('lbov').style.display = 'none'; }
+    function lbClose(){
+      // Leave full screen first, or the page is left in it with nothing shown.
+      if (document.fullscreenElement || document.webkitFullscreenElement) lbExitFull();
+      document.getElementById('lbov').style.display = 'none';
+    }
+
+    /* Full screen. The whole overlay goes full screen — not just the image — so
+       the arrows and the "which action item" panel come with it and stepping
+       through works exactly as it does in the window. */
+    function lbIsFull(){ return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+    function lbExitFull(){
+      if (document.exitFullscreen) document.exitFullscreen();
+      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    }
+    function lbToggleFull(){
+      var o = document.getElementById('lbov');
+      if (lbIsFull()) { lbExitFull(); return; }
+      if (o.requestFullscreen) o.requestFullscreen();
+      else if (o.webkitRequestFullscreen) o.webkitRequestFullscreen();
+    }
+    function lbSyncFullBtn(){
+      var b = document.getElementById('lbfull');
+      var full = lbIsFull();
+      b.innerHTML = full ? '&#10005;' : '&#9974;';
+      b.title = full ? 'Leave full screen (F or Esc)' : 'Full screen (F, or double-click the photo)';
+    }
+    document.addEventListener('fullscreenchange', lbSyncFullBtn);
+    document.addEventListener('webkitfullscreenchange', lbSyncFullBtn);
 
     document.getElementById('lbprev').onclick  = function(e){ e.stopPropagation(); lbStep(-1); };
     document.getElementById('lbnext').onclick  = function(e){ e.stopPropagation(); lbStep(1); };
+    document.getElementById('lbfull').onclick   = function(e){ e.stopPropagation(); lbToggleFull(); };
     document.getElementById('lbclose').onclick = function(e){ e.stopPropagation(); lbClose(); };
+    document.getElementById('lbimg').ondblclick = function(e){ e.stopPropagation(); lbToggleFull(); };
     // Clicking the backdrop closes; clicking the photo or the panel does not.
     document.getElementById('lbov').onclick = function(e){ if (e.target === this) lbClose(); };
 
@@ -1885,7 +1926,12 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
       if (document.getElementById('lbov').style.display !== 'flex') return;
       if (e.key === 'ArrowLeft')  { e.preventDefault(); lbStep(-1); }
       else if (e.key === 'ArrowRight') { e.preventDefault(); lbStep(1); }
-      else if (e.key === 'Escape')     { e.preventDefault(); lbClose(); }
+      else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); lbToggleFull(); }
+      else if (e.key === 'Escape') {
+        // The browser handles Esc out of full screen itself; only close the
+        // viewer when we are already back in the window.
+        if (!lbIsFull()) { e.preventDefault(); lbClose(); }
+      }
     });
     // Copy just the number. execCommand is kept as the fallback because the
     // clipboard API is often blocked when this report is shown in an iframe.
