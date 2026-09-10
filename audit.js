@@ -636,6 +636,18 @@ async function runFull(page, context) {
           serviceWriter: r.serviceWriter || '', technicians, poNumber: r.poNumber,
           sheetComplete, sheetStatus, notes, serviceCall,
           actionItemCount: so.actionItems.length, findings,
+          // What each action item was FOR, keyed by its number. The photo viewer
+          // shows this beside the image — "AI 3" alone doesn't say whether you
+          // are looking at a brake job or a marker light.
+          // Strip the "Add Address" link text the scraper picks up from the cell
+          // next to the service ("Drive to unitAdd Address"). Display only —
+          // originalNote itself is left alone, because every check matches on it.
+          aiServices: Object.fromEntries(
+            so.actionItems.map((ai) => [
+              String(ai.number || ai.id),
+              String(ai.originalNote || '').replace(/\s*Add\s+Address\s*$/i, '').trim(),
+            ])
+          ),
         });
 
         // Download photos: save each locally (for the report) and fingerprint it.
@@ -1554,7 +1566,9 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
       }).join('');
       // Order-level photos aren't an action item, so they get their own label.
       const lbl = ai === SO_LEVEL_PHOTO ? 'Order photos' : ('AI ' + esc(ai));
-      return `<div class="aiphotos"><span class="ailbl">${lbl}</span>${thumbs}</div>`;
+      const svc = ai === SO_LEVEL_PHOTO ? '' : String((r.aiServices || {})[ai] || '');
+      const svcSpan = svc ? `<span class="aisvc" title="${esc(svc)}">${esc(svc)}</span>` : '';
+      return `<div class="aiphotos" data-svc="${esc(svc)}"><span class="ailbl">${lbl}</span>${svcSpan}${thumbs}</div>`;
     }).join('');
     return `<details class="gallery"><summary>Photos (${r.photos.length})</summary>${groups}</details>`;
   };
@@ -1727,6 +1741,10 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
   .note-text{font-size:13px;color:var(--navy);white-space:pre-wrap}
   .aiphotos{display:flex;align-items:center;flex-wrap:wrap;gap:9px;margin:10px 0}
   .ailbl{font-size:11px;font-weight:700;color:var(--dim);min-width:50px}
+  /* What the action item was for, so a row of photos is identifiable without
+     opening one. Its own full-width line, so it never squeezes the thumbnails. */
+  .aisvc{flex-basis:100%;font-size:11.5px;color:var(--dim);margin:-3px 0 1px 0;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .thumb{position:relative;width:90px;height:90px;border-radius:10px;overflow:hidden;border:2px solid var(--line);box-shadow:0 3px 10px rgba(11,35,65,.10);transition:transform .15s}
   .thumb:hover{transform:scale(1.05)}
   .thumb img{width:100%;height:100%;object-fit:cover;cursor:zoom-in;display:block}
@@ -1739,7 +1757,8 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
   #lbinfo{width:210px;flex:none;color:#e8eef7;font-size:13px;line-height:1.5;align-self:center}
   #lbinfo .lbso{font-size:17px;font-weight:800;letter-spacing:-.01em;margin-bottom:2px}
   #lbinfo .lbunit{color:#93a4bd;font-size:12px;margin-bottom:8px}
-  #lbinfo .lbai{font-weight:700;color:#9ec1f5;margin-bottom:10px}
+  #lbinfo .lbai{font-weight:700;color:#9ec1f5;margin-bottom:2px}
+  #lbinfo .lbsvc{color:#c8d6ea;font-size:12.5px;line-height:1.45;margin-bottom:10px}
   #lbinfo .lbcount{color:#93a4bd;font-variant-numeric:tabular-nums}
   #lbinfo .lbdup{margin-top:10px;color:#ffb4b4;font-weight:700;font-size:12px;line-height:1.45}
   #lbinfo .lbhint{margin-top:16px;color:#6f8098;font-size:11px}
@@ -1814,6 +1833,7 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
       <div class="lbso"   id="lbso"></div>
       <div class="lbunit" id="lbunit"></div>
       <div class="lbai"   id="lbai"></div>
+      <div class="lbsvc"  id="lbsvc"></div>
       <div class="lbcount" id="lbcount"></div>
       <div class="lbdup"  id="lbdup"></div>
       <div class="lbhint">&#8592; &#8594; to move &nbsp;·&nbsp; F for full screen &nbsp;·&nbsp; Esc to close</div>
@@ -1869,6 +1889,7 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
       document.getElementById('lbso').textContent = soEl ? soEl.textContent.trim() : '';
       document.getElementById('lbunit').textContent = unit ? ('Unit ' + unit) : '';
       document.getElementById('lbai').textContent = lbl;
+      document.getElementById('lbsvc').textContent = grp ? (grp.getAttribute('data-svc') || '') : '';
       document.getElementById('lbcount').textContent = (LB.i + 1) + ' of ' + LB.list.length;
 
       var dup = img.getAttribute('data-dup') || '';
