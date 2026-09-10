@@ -803,7 +803,12 @@
     // use", sign-in prompts) surface as a single line by the buttons instead.
     // Routine per-order output still drives the progress bar and the stat cards.
     const addLine=(t)=>{ const s=String(t).trim(); if(!s) return; $('runmsg').textContent=s; const el=$('log'); if(el){ el.textContent += s + String.fromCharCode(10); el.scrollTop=el.scrollHeight; } };
+    let externalBusy=false;
     function setRunning(r, by, kind){
+      // "Not running" here means no child of THIS server. A scheduled or portal
+      // run still owns the browser, so leave its banner, chip and disabled
+      // buttons alone instead of resetting the page to Idle over the top of it.
+      if(!r && typeof externalBusy !== 'undefined' && externalBusy){ $('stop').classList.add('hidden'); return; }
       $('run').disabled=r; $('connect').disabled=r;
       $('stop').classList.toggle('hidden', !r);
       chip.textContent = r ? (kind==='signin'?'Signing in…':'Auditing…') : 'Idle';
@@ -1221,13 +1226,44 @@
       finally{ lbl.textContent=prev; btn.disabled=false; }
     };
 
+    /* A run started elsewhere on this PC — by the clock (a scheduled run) or by
+       the FLSS portal — is NOT this server's child process, so it produces no
+       live events here. Without polling, the page looked completely idle while
+       the machine was busy, and pressing Run Audit just said "already running"
+       with nothing on screen to back that up. Poll the machine-wide lock so an
+       outside run is visible while it happens. */
+    function showExternalBusy(s){
+      const on = !!(s.busy && !s.running);
+      if(on){
+        externalBusy=true;
+        const what = s.busyKind==='open' ? 'an open-SO audit'
+          : s.busyKind==='fixaddresses' ? 'an estimate address fix' : 'an audit';
+        setProg(0, (s.busyBy||'Someone')+' is running '+what+' on this computer…', true);
+        $('runmsg').textContent = s.busyMessage || ((s.busyBy||'Someone')+' is running '+what+' — the Run buttons free up when it finishes.');
+        chip.textContent='Busy'; chip.className='chip run';
+        ['run','runOpen','fixAddr'].forEach(id=>{ const b=$(id); if(b){ b.disabled=true; b.title='Busy — '+(s.busyBy||'another run')+' is using the browser on this PC.'; } });
+      } else if(externalBusy){
+        // It finished: hand the page back and pick up whatever it produced.
+        externalBusy=false;
+        hideProg(); $('runmsg').textContent='';
+        chip.textContent='Idle'; chip.className='chip';
+        ['run','runOpen','fixAddr'].forEach(id=>{ const b=$(id); if(b){ b.disabled=false; b.title=''; } });
+        if(s.reportExists) loadReport();
+      }
+      return on;
+    }
+    function pollBusy(){
+      fetch('/api/status').then(r=>r.json()).then(s=>{ showExternalBusy(s); }).catch(()=>{});
+    }
+    setInterval(pollBusy, 5000);
+
     fetch('/api/status').then(r=>r.json()).then(s=>{
-      // A portal-triggered run is not OUR child process, so surface it too.
-      if(!s.running && s.busy && s.busyMessage){ addLine(s.busyMessage); }
       if(s.running){ setProg(0, 'In progress…', true); lastKind=s.kind||''; if(s.kind!=='signin'){ resetLiveStats(); showReportState('building'); } }
       if(s.lines&&s.lines.length){ s.lines.forEach(m=>{ if(m.type==='log'){handleLogForProgress(m.line); updateLiveStats(m.line); if(/orders.*findings/i.test(m.line)) showSummary(m.line);} }); }
       setRunning(s.running, s.startedBy, s.kind);
-      if(!s.running){ hideProg(); if(s.reportExists) loadReport(); else showReportState('empty'); }
+      // After setRunning, so an external run's banner is not immediately reset.
+      showExternalBusy(s);
+      if(!s.running && !s.busy){ hideProg(); if(s.reportExists) loadReport(); else showReportState('empty'); }
       if(s.reportExists){ $('view').disabled=false; $('pdf').disabled=false; }
     });
     loadDashboard();
