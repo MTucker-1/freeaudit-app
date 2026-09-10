@@ -1549,7 +1549,7 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
         const isDup = others.length > 0;
         const cap = isDup ? ('REUSED — also on ' + others.join(', ')) : '';
         return `<div class="thumb ${isDup ? 'dup' : ''}">
-            <img src="photos/${esc(p.localFile)}" loading="lazy" onclick="lb('photos/${esc(p.localFile)}')" title="${esc(cap)}">
+            <img src="photos/${esc(p.localFile)}" loading="lazy" onclick="lb(this)" title="${esc(cap)}" data-dup="${isDup ? esc(others.join(', ')) : ''}">
             ${isDup ? '<span class="dupbadge">REUSED</span>' : ''}</div>`;
       }).join('');
       // Order-level photos aren't an action item, so they get their own label.
@@ -1732,8 +1732,29 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
   .thumb img{width:100%;height:100%;object-fit:cover;cursor:zoom-in;display:block}
   .thumb.dup{border-color:var(--red)}
   .dupbadge{position:absolute;bottom:0;left:0;right:0;background:var(--red);color:#fff;font-size:9px;font-weight:800;text-align:center;padding:2px 0;letter-spacing:.04em}
-  #lbov{display:none;position:fixed;inset:0;background:rgba(7,24,44,.88);z-index:999;align-items:center;justify-content:center;cursor:zoom-out}
-  #lbov img{max-width:92vw;max-height:92vh;border-radius:8px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  #lbov{display:none;position:fixed;inset:0;background:rgba(7,24,44,.92);z-index:999;align-items:center;justify-content:center;gap:14px;padding:24px}
+  #lbfig{margin:0;display:flex;align-items:center;justify-content:center;max-width:70vw;max-height:92vh}
+  #lbov img{max-width:70vw;max-height:88vh;border-radius:8px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  /* Which action item you are looking at, beside the photo rather than over it. */
+  #lbinfo{width:210px;flex:none;color:#e8eef7;font-size:13px;line-height:1.5;align-self:center}
+  #lbinfo .lbso{font-size:17px;font-weight:800;letter-spacing:-.01em;margin-bottom:2px}
+  #lbinfo .lbunit{color:#93a4bd;font-size:12px;margin-bottom:8px}
+  #lbinfo .lbai{font-weight:700;color:#9ec1f5;margin-bottom:10px}
+  #lbinfo .lbcount{color:#93a4bd;font-variant-numeric:tabular-nums}
+  #lbinfo .lbdup{margin-top:10px;color:#ffb4b4;font-weight:700;font-size:12px;line-height:1.45}
+  #lbinfo .lbhint{margin-top:16px;color:#6f8098;font-size:11px}
+  .lbnav{flex:none;width:46px;height:46px;border-radius:50%;border:0;cursor:pointer;font-size:20px;
+    background:rgba(255,255,255,.12);color:#fff;transition:background .15s}
+  .lbnav:hover{background:rgba(255,255,255,.26)}
+  .lbnav:disabled{opacity:.22;cursor:default}
+  #lbclose{position:absolute;top:16px;right:20px;width:38px;height:38px;border-radius:50%;border:0;cursor:pointer;
+    font-size:22px;line-height:1;background:rgba(255,255,255,.12);color:#fff}
+  #lbclose:hover{background:rgba(255,255,255,.26)}
+  @media (max-width:760px){
+    #lbov{flex-wrap:wrap}
+    #lbinfo{width:100%;text-align:center;order:3}
+    #lbov img{max-width:88vw;max-height:64vh}
+  }
   /* Two plain lists so the actionable SOs are readable at a glance. */
   .lists{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px}
   .list{background:#fff;border:1px solid #e3e9f2;border-radius:12px;padding:14px 18px 16px}
@@ -1775,9 +1796,97 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
   ${cards}
   </div>
   ${openSection}
-  <div id="lbov" onclick="this.style.display='none'"><img id="lbimg" src=""></div>
+  <div id="lbov">
+    <button id="lbprev" class="lbnav" title="Previous (left arrow)">&#10094;</button>
+    <figure id="lbfig"><img id="lbimg" src=""></figure>
+    <aside id="lbinfo">
+      <div class="lbso"   id="lbso"></div>
+      <div class="lbunit" id="lbunit"></div>
+      <div class="lbai"   id="lbai"></div>
+      <div class="lbcount" id="lbcount"></div>
+      <div class="lbdup"  id="lbdup"></div>
+      <div class="lbhint">&#8592; &#8594; to move &nbsp;·&nbsp; Esc to close</div>
+    </aside>
+    <button id="lbnext" class="lbnav" title="Next (right arrow)">&#10095;</button>
+    <button id="lbclose" title="Close (Esc)">&times;</button>
+  </div>
   <script>
-    function lb(src){ var o=document.getElementById('lbov'); document.getElementById('lbimg').src=src; o.style.display='flex'; }
+    /* Photo viewer. Arrow keys step through the photos of the SAME service order
+       — the set you are actually reviewing — rather than every photo in the
+       report, and the panel beside the image says which action item each one
+       belongs to. Clicking out to reopen each photo was the whole complaint. */
+    var LB = { list: [], i: 0 };
+
+    function lb(img){
+      // Scope to this order's gallery; fall back to the whole page if the
+      // markup ever changes shape.
+      var scope = img.closest ? (img.closest('details.gallery') || document) : document;
+      LB.list = Array.prototype.slice.call(scope.querySelectorAll('.thumb img'));
+      LB.i = LB.list.indexOf(img);
+      if (LB.i < 0) { LB.list = [img]; LB.i = 0; }
+      document.getElementById('lbov').style.display = 'flex';
+      lbShow();
+    }
+
+    function lbShow(){
+      var img = LB.list[LB.i];
+      if (!img) return;
+      document.getElementById('lbimg').src = img.getAttribute('src');
+
+      // Which action item: read the label this thumbnail is grouped under.
+      var grp = img.closest ? img.closest('.aiphotos') : null;
+      var lbl = grp && grp.querySelector('.ailbl') ? grp.querySelector('.ailbl').textContent.trim() : '';
+      // No regex here on purpose: this script is emitted inside a template
+      // literal, so a backslash escape like \s is eaten before it reaches the
+      // report and the pattern silently stops matching.
+      if (lbl.slice(0, 3).toUpperCase() === 'AI ') lbl = 'Action Item ' + lbl.slice(3).trim();
+
+      // Which order: each order card is <div class="so">, with the number in
+      // its .so-head. (There is no .card in this report — that selector found
+      // nothing and left the panel blank.)
+      var card = img.closest ? img.closest('.so') : null;
+      var soEl = card ? card.querySelector('.so-head strong') : null;
+      var unitEl = card ? card.querySelector('.so-head .meta') : null;
+      var unit = '';
+      if (unitEl) {
+        // Same reason as above — plain string work, no escapes to lose.
+        var t = unitEl.textContent;
+        var at = t.indexOf('Unit ');
+        if (at > -1) unit = t.slice(at + 5).split(/[^A-Za-z0-9-]/)[0];
+      }
+      document.getElementById('lbso').textContent = soEl ? soEl.textContent.trim() : '';
+      document.getElementById('lbunit').textContent = unit ? ('Unit ' + unit) : '';
+      document.getElementById('lbai').textContent = lbl;
+      document.getElementById('lbcount').textContent = (LB.i + 1) + ' of ' + LB.list.length;
+
+      var dup = img.getAttribute('data-dup') || '';
+      document.getElementById('lbdup').textContent = dup ? ('REUSED — also on ' + dup) : '';
+
+      document.getElementById('lbprev').disabled = (LB.i === 0);
+      document.getElementById('lbnext').disabled = (LB.i === LB.list.length - 1);
+    }
+
+    function lbStep(d){
+      if (!LB.list.length) return;
+      var n = LB.i + d;
+      if (n < 0 || n >= LB.list.length) return;  // stop at the ends, don't wrap
+      LB.i = n;
+      lbShow();
+    }
+    function lbClose(){ document.getElementById('lbov').style.display = 'none'; }
+
+    document.getElementById('lbprev').onclick  = function(e){ e.stopPropagation(); lbStep(-1); };
+    document.getElementById('lbnext').onclick  = function(e){ e.stopPropagation(); lbStep(1); };
+    document.getElementById('lbclose').onclick = function(e){ e.stopPropagation(); lbClose(); };
+    // Clicking the backdrop closes; clicking the photo or the panel does not.
+    document.getElementById('lbov').onclick = function(e){ if (e.target === this) lbClose(); };
+
+    document.addEventListener('keydown', function(e){
+      if (document.getElementById('lbov').style.display !== 'flex') return;
+      if (e.key === 'ArrowLeft')  { e.preventDefault(); lbStep(-1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); lbStep(1); }
+      else if (e.key === 'Escape')     { e.preventDefault(); lbClose(); }
+    });
     // Copy just the number. execCommand is kept as the fallback because the
     // clipboard API is often blocked when this report is shown in an iframe.
     function copySo(el){
