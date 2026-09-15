@@ -270,6 +270,18 @@ async function ensureListLoaded(page, opts = {}) {
     }
   }
 
+  // Headless: there is no window for anyone to type into, so waiting 15 minutes
+  // for a manual sign-in just hangs the run — and a scheduled run overnight
+  // would sit there invisibly until its time limit. Say what is wrong and stop.
+  if (CONFIG.headless && MODE !== 'login') {
+    log('\n  ──────────────────────────────────────────────');
+    log('  Fullbay would not accept the saved sign-in, and this run is headless');
+    log('  (no browser window), so nobody can sign in by hand.');
+    log('  Open FreeAudit and press "Sign in to Fullbay" once, then run again.');
+    log('  ──────────────────────────────────────────────\n');
+    return false;
+  }
+
   log('\n  ──────────────────────────────────────────────');
   log('  Please log into Fullbay in the browser window.');
   log('  Use "Continue with Microsoft" if that is how you normally sign in.');
@@ -616,7 +628,7 @@ async function runFull(page, context) {
         const unitNum = so.unitNumber || r.unit;
         let sheetComplete; let sheetStatus;
         if (sheet) {
-          const entry = sheet.map.get(normUnit(unitNum));
+          const entry = lookupUnit(sheet, unitNum);
           sheetComplete = !!(entry && entry.complete);
           sheetStatus = entry ? entry.status : 'Not found';
           if (!sheetComplete && hasInspection) {
@@ -1107,6 +1119,48 @@ function cellText(cell) {
 }
 const normUnit = (s) => String(s == null ? '' : s).trim().toUpperCase();
 
+/*
+ * The same trailer is written differently on different trackers: Fullbay has
+ * "ALMZ1234DV" while a sheet may carry "1234DV", "almz-1234-dv" or
+ * "ALMZ 1234 DV". Exact string matching missed all of those and reported the
+ * unit as "not found in the tracker".
+ *
+ * Variants, most specific first:
+ *   ALMZ1234DV  ->  ALMZ1234DV   (punctuation and spacing removed)
+ *                   1234DV       (leading fleet prefix dropped)
+ *
+ * The bare number ("1234") is deliberately NOT a variant: it collides across
+ * fleets, and a wrong match would mark the wrong unit complete.
+ */
+function unitVariants(u) {
+  const base = normUnit(u).replace(/[^A-Z0-9]/g, '');
+  if (!base) return [];
+  const out = [base];
+  const m = base.match(/^[A-Z]+(\d[A-Z0-9]*)$/); // prefix + digits(+suffix)
+  if (m && m[1] !== base) out.push(m[1]);
+  return out;
+}
+
+/*
+ * Find a unit in the tracker, allowing for those variants. Exact match wins.
+ * A variant is only accepted when it points at exactly ONE tracker unit — if
+ * "1234DV" could be two different units, that is not a match worth trusting.
+ */
+function lookupUnit(sheet, unitNum) {
+  if (!sheet || !sheet.map) return null;
+  const exact = sheet.map.get(normUnit(unitNum));
+  if (exact) return exact;
+  if (!sheet.alt) return null;
+  for (const v of unitVariants(unitNum)) {
+    const keys = sheet.alt.get(v);
+    if (keys && keys.size === 1) {
+      const hit = sheet.map.get([...keys][0]);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
 // Newest .xlsx in the project folder (the user's exported tracker).
 function findNewestXlsx() {
   const files = fs.readdirSync(DATA_DIR)
@@ -1197,6 +1251,7 @@ function extractTabCompletion(rows) {
 // Merge many tabs into unit -> {status, complete, tab}. A "complete" in ANY tab wins.
 function buildMapFromTabs(tabs) {
   const map = new Map();
+  const alt = new Map();   // variant -> Set of canonical unit keys
   const tabsUsed = [];
   for (const { name, rows } of tabs) {
     const entries = extractTabCompletion(rows);
@@ -1205,9 +1260,15 @@ function buildMapFromTabs(tabs) {
     for (const e of entries) {
       const prev = map.get(e.unit);
       if (!prev || (!prev.complete && e.complete)) map.set(e.unit, { status: e.status || '(blank)', complete: e.complete, tab: name });
+      // Index every way this unit could be written, so a differently-formatted
+      // number on the service order still finds it.
+      for (const v of unitVariants(e.unit)) {
+        if (!alt.has(v)) alt.set(v, new Set());
+        alt.get(v).add(e.unit);
+      }
     }
   }
-  return { map, tabsUsed };
+  return { map, alt, tabsUsed };
 }
 
 // Build unit -> {status, complete, tab}. Prefers the LIVE Google Sheets (always
@@ -1259,8 +1320,8 @@ async function loadSheetCompletionMap() {
         titles.push(r.sheet.title);
         for (const t of r.sheet.tabs) tabs.push(t);
       });
-      const { map, tabsUsed } = buildMapFromTabs(tabs);
-      return { map, files: titles, year, tabsUsed, live: true };
+      const { map, alt, tabsUsed } = buildMapFromTabs(tabs);
+      return { map, alt, files: titles, year, tabsUsed, live: true };
     } catch (e) {
       log(`Sheet tracker: LIVE Google Sheets read failed (${e.message}). Falling back to the local .xlsx export.`);
     }
@@ -1297,10 +1358,10 @@ async function loadSheetCompletionMap() {
       tabs.push({ name: ws.name, rows, file: path.basename(file) });
     }
   }
-  const { map, tabsUsed } = buildMapFromTabs(tabs);
+  const { map, alt, tabsUsed } = buildMapFromTabs(tabs);
   const usedSet = new Set(tabsUsed);
   const filesUsed = [...new Set(tabs.filter((t) => usedSet.has(t.name)).map((t) => t.file))];
-  return { map, files: filesUsed, year, tabsUsed, live: false };
+  return { map, alt, files: filesUsed, year, tabsUsed, live: false };
 }
 
 /* ----------------------------------------------------------------------------
@@ -3012,7 +3073,7 @@ async function runAddrModalProbe(page, context) {
  * Entry point.
  * -------------------------------------------------------------------------- */
 // Allow requiring this file (e.g. for offline parser tests) without launching a browser.
-if (require.main !== module) { module.exports = { loadSheetCompletionMap, extractTabCompletion, buildMapFromTabs, writeJson, writeCsv, writeHtml }; }
+if (require.main !== module) { module.exports = { loadSheetCompletionMap, extractTabCompletion, buildMapFromTabs, unitVariants, lookupUnit, writeJson, writeCsv, writeHtml }; }
 
 if (require.main === module) (async () => {
   // Open the Vorto portal so a person can sign in (session saved to .vorto-profile).
@@ -3034,7 +3095,7 @@ if (require.main === module) (async () => {
     log('Tabs used: ' + s.tabsUsed.join(' | '));
     // Includes units from tabs that previously failed to load.
     ['ALMZ8277DV', 'ALMZ9147DV', 'ALMZ3324DV', 'ALMZ1168HC', 'ALMZ1031FB', 'ALMZ1230FB'].forEach((u) => {
-      const e = s.map.get(u);
+      const e = lookupUnit(s, u);
       log(`  ${u} -> ${e ? (e.complete ? 'COMPLETE' : 'not complete') + ' (raw: "' + e.status + '") [' + e.tab + ']' : 'Not found'}`);
     });
     return;
