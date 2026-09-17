@@ -1221,11 +1221,13 @@
       const rows=d.rows||[];
       const t=d.totals||{ready:0,open:0,runs:0};
       const a=d.allTime||t;
+      // Distinct service orders, not audit passes: the same SO stays in Ready to
+      // Invoice across several runs and must not be counted again each time.
       $('tlTotals').innerHTML =
-        '<div class="tl-tile"><div class="v">'+(t.ready+t.open).toLocaleString()+'</div><div class="l">SOs audited (shown)</div></div>'+
+        '<div class="tl-tile"><div class="v">'+(t.ready+t.open).toLocaleString()+'</div><div class="l">Service orders (shown)</div></div>'+
         '<div class="tl-tile"><div class="v">'+t.ready.toLocaleString()+'</div><div class="l">Ready to invoice</div></div>'+
         '<div class="tl-tile"><div class="v">'+t.open.toLocaleString()+'</div><div class="l">Open SOs</div></div>'+
-        '<div class="tl-tile"><div class="v">'+(a.ready+a.open).toLocaleString()+'</div><div class="l">All time</div></div>';
+        '<div class="tl-tile"><div class="v">'+(a.ready+a.open).toLocaleString()+'</div><div class="l">All time (distinct)</div></div>';
 
       if(!rows.length){
         $('tlChart').innerHTML='<div class="sc-empty">No audits recorded yet. Run an audit and this starts building.</div>';
@@ -1244,16 +1246,24 @@
       }).join('')
       + '<div class="tl-key"><span><i style="background:var(--navy-2)"></i>Ready to invoice</span>'
       + '<span><i style="background:#9ec1f5"></i>Open SOs</span>'
-      + '<span>'+(t.runs||0)+' audit run'+((t.runs||0)===1?'':'s')+' in this period</span></div>';
+      + '<span>'+(t.runs||0)+' audit run'+((t.runs||0)===1?'':'s')+'</span>'
+      + '<span>'+(t.passes||0).toLocaleString()+' order checks</span></div>';
 
       // Animate after layout, the same way the other Impact bars do.
       requestAnimationFrame(()=>{ setTimeout(()=>{
         document.querySelectorAll('#tlChart .tl-track i').forEach(b=>{ b.style.width=b.dataset.w+'%'; });
       },60); });
 
-      $('tlSince').textContent = d.since
-        ? ('Recorded since ' + new Date(d.since).toLocaleDateString([], {month:'long', day:'numeric', year:'numeric'}))
+      var since = d.since
+        ? ('Counts each service order once, however many times it was re-audited. Recorded since '
+           + new Date(d.since).toLocaleDateString([], {month:'long', day:'numeric', year:'numeric'}) + '.')
         : '';
+      // Older runs stored only a count, so those periods cannot be de-duplicated.
+      if(d.estimatedRuns){
+        since += ' ' + d.estimatedRuns + ' earlier run' + (d.estimatedRuns===1?'':'s')
+          + ' pre-date per-order tracking and are counted per run, so those periods may be overstated.';
+      }
+      $('tlSince').textContent = since;
     }
 
     function loadTimeline(){

@@ -73,6 +73,10 @@ function recordRun(results, when = new Date(), kind = 'audit') {
       // and are read as Ready-to-Invoice, which is all that used to be recorded.
       kind,
       orders: results.length,
+      // WHICH orders, not just how many. The same SO stays in Ready to Invoice
+      // across several audits, so totalling `orders` counted it once per run —
+      // the timeline needs to count each service order once.
+      sos: [...new Set(results.map((r) => String(r.soNumber || '').trim()).filter(Boolean))],
       flagged: results.filter((r) => (r.findings || []).length).length,
       people,
     });
@@ -184,30 +188,71 @@ function timeline(period = 'month', limit = 24) {
   const h = readHistory();
   const buckets = new Map();
 
+  // Distinct service orders, per bucket and overall. An order re-audited in two
+  // different months counts in each of those months (it WAS audited in each) but
+  // only once in the all-time figure.
+  const allReady = new Set();
+  const allOpen = new Set();
+  let legacyRuns = 0;
+
   for (const run of (h.runs || [])) {
     const d = new Date(run.at);
     if (isNaN(d)) continue;
     const { key, label } = bucketOf(d, p);
-    const b = buckets.get(key) || { key, label, ready: 0, open: 0, runs: 0, flagged: 0 };
-    // Runs recorded before the Open-SO pass was tracked carry no kind.
-    if (run.kind === 'open') b.open += run.orders || 0; else b.ready += run.orders || 0;
+    let b = buckets.get(key);
+    if (!b) {
+      b = { key, label, ready: 0, open: 0, runs: 0, flagged: 0, passes: 0, estimated: false,
+        _ready: new Set(), _open: new Set() };
+      buckets.set(key, b);
+    }
+    const isOpen = run.kind === 'open';   // no kind = Ready to Invoice, all that used to be recorded
     b.runs += 1;
+    b.passes += run.orders || 0;
     b.flagged += run.flagged || 0;
-    buckets.set(key, b);
+
+    if (Array.isArray(run.sos) && run.sos.length) {
+      for (const so of run.sos) { (isOpen ? b._open : b._ready).add(so); (isOpen ? allOpen : allReady).add(so); }
+    } else {
+      // Recorded before SO numbers were kept — the only figure available is the
+      // run total, which double-counts anything re-audited. Marked so the UI can
+      // say so rather than present it as a clean count.
+      b.estimated = true;
+      legacyRuns += 1;
+      if (isOpen) b.open += run.orders || 0; else b.ready += run.orders || 0;
+    }
   }
 
-  const rows = [...buckets.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const rows = [...buckets.values()]
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    .map((b) => {
+      const r = { ...b, ready: b.ready + b._ready.size, open: b.open + b._open.size };
+      delete r._ready; delete r._open;
+      return r;
+    });
+
   const recent = rows.slice(-limit);
-  const totals = recent.reduce((t, r) => ({
-    ready: t.ready + r.ready, open: t.open + r.open, runs: t.runs + r.runs, flagged: t.flagged + r.flagged,
-  }), { ready: 0, open: 0, runs: 0, flagged: 0 });
+  const sum = (list) => list.reduce((t, r) => ({
+    ready: t.ready + r.ready, open: t.open + r.open, runs: t.runs + r.runs,
+    flagged: t.flagged + r.flagged, passes: t.passes + r.passes,
+  }), { ready: 0, open: 0, runs: 0, flagged: 0, passes: 0 });
 
-  // All-time, regardless of the window being shown.
-  const all = rows.reduce((t, r) => ({
-    ready: t.ready + r.ready, open: t.open + r.open, runs: t.runs + r.runs, flagged: t.flagged + r.flagged,
-  }), { ready: 0, open: 0, runs: 0, flagged: 0 });
+  const totals = sum(recent);
+  // All-time counts each SO once across the whole history, so it is not simply
+  // the sum of the buckets.
+  const legacyAll = rows.reduce((t, r) => ({ ready: t.ready + (r.estimated ? r.ready : 0), open: t.open + (r.estimated ? r.open : 0) }), { ready: 0, open: 0 });
+  const allTime = {
+    ready: allReady.size + legacyAll.ready,
+    open: allOpen.size + legacyAll.open,
+    runs: rows.reduce((n, r) => n + r.runs, 0),
+    flagged: rows.reduce((n, r) => n + r.flagged, 0),
+    passes: rows.reduce((n, r) => n + r.passes, 0),
+  };
 
-  return { period: p, rows: recent, totals, allTime: all, since: (h.runs && h.runs[0]) ? h.runs[0].at : null };
+  return {
+    period: p, rows: recent, totals, allTime,
+    estimatedRuns: legacyRuns,   // runs with no SO list — counted as run totals
+    since: (h.runs && h.runs[0]) ? h.runs[0].at : null,
+  };
 }
 
 module.exports = { recordRun, aggregate, timeline, weekOf, readHistory, HISTORY, PERIODS };
