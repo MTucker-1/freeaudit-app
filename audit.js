@@ -2792,7 +2792,18 @@ const ZW_SRC = '[\\u200B-\\u200D\\uFEFF\\u00AD]';
 async function readEstimateState(page, repairOrderId) {
   await page.goto(`${CONFIG.baseUrl}/office/workorder/approveRepairOrderQuote.html?repairOrderId=${repairOrderId}`,
     { waitUntil: 'domcontentloaded' });
-  await sleep(3500);
+  // Wait for what we actually need instead of a flat 3.5s. The estimate is
+  // usually ready in well under a second; occasionally it needs longer, and a
+  // fixed pause was both slower on average and less reliable at the tail.
+  await page.waitForSelector('#billingDisplayAddress', { timeout: 25000 }).catch(() => {});
+  // The address fields are populated by script after the markup appears, so wait
+  // for a value rather than merely the element. An empty value is legitimate on
+  // an order with no address set, hence the short cap and the tolerated timeout.
+  await page.waitForFunction(() => {
+    const b = document.getElementById('billingDisplayAddress');
+    const s = document.getElementById('shipToDisplayAddress');
+    return (b && b.value.trim()) || (s && s.value.trim());
+  }, { timeout: 6000 }).catch(() => {});
   return page.evaluate((zw) => {
     const ZW = new RegExp(zw, 'g');
     const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
@@ -2829,6 +2840,12 @@ async function readEstimateState(page, repairOrderId) {
  */
 async function applyAddress(page, which, facilityName) {
   const fieldId = which === 'billing' ? 'billingDisplayAddress' : 'shipToDisplayAddress';
+  // What the field says now, so the save can be detected by the value CHANGING
+  // rather than by waiting a fixed three seconds and hoping.
+  const wasValue = await page.evaluate((fid) => {
+    const el = document.getElementById(fid);
+    return el ? el.value : '';
+  }, fieldId).catch(() => '');
 
   const opened = await page.evaluate((fid) => {
     const el = document.getElementById(fid);
@@ -2840,7 +2857,10 @@ async function applyAddress(page, which, facilityName) {
     return 'ok';
   }, fieldId);
   if (opened !== 'ok') return { ok: false, reason: opened };
-  await sleep(2500);
+  // The picker is fetched over AJAX; wait for its rows rather than guessing.
+  await page.waitForFunction(() =>
+    document.querySelectorAll('#addresslist tbody tr').length > 0,
+  { timeout: 20000 }).catch(() => {});
 
   // Show every address — the picker paginates at 10 and the match may be deeper.
   await page.evaluate(() => {
@@ -2850,7 +2870,14 @@ async function applyAddress(page, which, facilityName) {
       sel.dispatchEvent(new Event('change', { bubbles: true }));
     }
   }).catch(() => {});
-  await sleep(1200);
+  // DataTables redraws asynchronously — wait for the row count to settle rather
+  // than pausing a fixed 1.2s on every single field of every single order.
+  await page.waitForFunction(() => {
+    const n = document.querySelectorAll('#addresslist tbody tr').length;
+    if (window.__faRows === n) return true;
+    window.__faRows = n;
+    return false;
+  }, { timeout: 6000, polling: 250 }).catch(() => {});
 
   // Click the row whose TITLE matches the facility exactly. Never "Add New Address".
   const picked = await page.evaluate((args) => {
@@ -2868,7 +2895,21 @@ async function applyAddress(page, which, facilityName) {
     return { ok: false, reason: 'no row titled "' + args.facility + '" in the picker' };
   }, { facility: facilityName, zw: ZW_SRC });
 
-  await sleep(3000); // let selectAddress() fire the field save
+  // selectAddress() closes the picker and writes the field. Wait for that to be
+  // visible rather than pausing 3s per field — on an order needing both Bill To
+  // and Ship To that pause alone cost six seconds.
+  if (picked.ok) {
+    await page.waitForFunction((args) => {
+      const el = document.getElementById(args.fid);
+      if (!el) return false;
+      const open = document.querySelector('#addresslist');
+      const closed = !open || !open.offsetParent;
+      return closed && el.value !== args.was;
+    }, { fid: fieldId, was: wasValue }, { timeout: 12000 }).catch(() => {});
+    // A short settle so the field's own save request is away before the next
+    // field opens its picker on the same page.
+    await sleep(400);
+  }
   return picked;
 }
 
