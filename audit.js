@@ -2426,7 +2426,14 @@ const OPEN_CHECK_NAMES = {
   O6: 'No photos', O7: 'Missing before/after',
 };
 
-function writeOpenHtml(openOrders) {
+/*
+ * Renders the Open-SO report. `opts.who` names one person, which puts their name
+ * in the heading — the per-employee PDFs are the same report filtered down, so a
+ * tech receives only their own orders rather than the whole shop's.
+ * `opts.outFile` writes somewhere other than open-report.html; the HTML string is
+ * returned either way.
+ */
+function writeOpenHtml(openOrders, opts = {}) {
   const flagged = openOrders.filter((o) => o.findings.length).length;
   const blockers = openOrders.reduce((n, o) => n + o.findings.filter((f) => f.severity === 'blocker').length, 0);
   const stale = openOrders.filter((o) => o.findings.some((f) => f.check === 'O1')).length;
@@ -2478,8 +2485,8 @@ function writeOpenHtml(openOrders) {
   .det{font-size:12px;color:#526179;margin-top:3px}
   @media(max-width:680px){.tiles{grid-template-columns:repeat(2,1fr)}}
 </style></head><body>
-  <div class="banner"><div class="wrap"><h1>Open SO Audit</h1>
-    <div class="sub">${openOrders.length} open orders · ${new Date().toLocaleString()}</div></div></div>
+  <div class="banner"><div class="wrap"><h1>Open SO Audit${opts.who ? ' — ' + esc(opts.who) : ''}</h1>
+    <div class="sub">${openOrders.length} open order${openOrders.length === 1 ? '' : 's'}${opts.who ? ' assigned to ' + esc(opts.who) : ''} · ${new Date().toLocaleString()}</div></div></div>
   <div class="tiles">
     <div class="tile"><div class="n">${openOrders.length}</div><div class="l">Open orders</div></div>
     <div class="tile red"><div class="n">${flagged}</div><div class="l">With something outstanding</div></div>
@@ -2488,7 +2495,32 @@ function writeOpenHtml(openOrders) {
   </div>
   <div class="wrap">${cards}</div>
 </body></html>`;
-  fs.writeFileSync(dataPath('open-report.html'), html, 'utf8');
+  fs.writeFileSync(opts.outFile || dataPath('open-report.html'), html, 'utf8');
+  return html;
+}
+
+/*
+ * Who is responsible for an open order. Fullbay fills these inconsistently, so
+ * take the first that is actually set rather than assuming one field.
+ */
+function openOrderOwner(o) {
+  return (o.leadTech || o.assignedTech || o.serviceWriter || '').trim() || 'Unassigned';
+}
+
+/** Roster for the per-employee reports: who has open orders, and how bad. */
+function openRoster(orders) {
+  const by = new Map();
+  for (const o of orders || []) {
+    const name = openOrderOwner(o);
+    const r = by.get(name) || { name, orders: 0, flagged: 0, blockers: 0, oldestDays: 0 };
+    r.orders += 1;
+    const fs_ = o.findings || [];
+    if (fs_.length) r.flagged += 1;
+    r.blockers += fs_.filter((f) => f.severity === 'blocker').length;
+    r.oldestDays = Math.max(r.oldestDays, ageInDaysSafe(o.ageText) || 0);
+    by.set(name, r);
+  }
+  return [...by.values()].sort((a, b) => b.blockers - a.blockers || b.orders - a.orders || a.name.localeCompare(b.name));
 }
 
 /* node audit.js open — audit the open orders on their own. */
@@ -3119,7 +3151,7 @@ async function runAddrModalProbe(page, context) {
  * Entry point.
  * -------------------------------------------------------------------------- */
 // Allow requiring this file (e.g. for offline parser tests) without launching a browser.
-if (require.main !== module) { module.exports = { loadSheetCompletionMap, extractTabCompletion, buildMapFromTabs, unitVariants, lookupUnit, writeJson, writeCsv, writeHtml }; }
+if (require.main !== module) { module.exports = { loadSheetCompletionMap, extractTabCompletion, buildMapFromTabs, unitVariants, lookupUnit, writeJson, writeCsv, writeHtml, writeOpenHtml, openRoster, openOrderOwner }; }
 
 if (require.main === module) (async () => {
   // Open the Vorto portal so a person can sign in (session saved to .vorto-profile).

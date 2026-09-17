@@ -268,6 +268,18 @@
   .sc-chips{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
   .sc-chip{font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;background:var(--navy-soft);color:var(--navy);white-space:nowrap}
   .sc-empty{padding:26px;text-align:center;color:var(--faint);font-size:14px}
+  /* Open SOs by employee */
+  .tech-row{display:flex;align-items:center;gap:12px;padding:11px 2px;border-bottom:1px solid var(--line)}
+  .tech-row:last-child{border-bottom:0}
+  .tech-av{width:34px;height:34px;flex:none;border-radius:50%;background:var(--navy-soft);color:var(--navy);
+    display:grid;place-items:center;font-size:12px;font-weight:800}
+  .tech-n{flex:1;min-width:0}
+  .tech-n b{display:block;font-size:14px;font-weight:700}
+  .tech-n span{font-size:12px;color:var(--dim)}
+  .tech-pill{font-size:10.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;
+    padding:3px 8px;border-radius:999px;background:var(--navy-soft);color:var(--navy);white-space:nowrap}
+  .tech-pill.red{background:#fdeaea;color:#c0392b}
+  .tech-acts{display:flex;gap:7px;flex:none}
   /* Impact timeline */
   .tl-head{display:flex;align-items:center;gap:12px;margin-bottom:12px}
   .tl-head .chart-title{flex:1}
@@ -534,6 +546,7 @@
             <div class="crow">
               <button id="view" class="btn btn-ghost" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> View Report</button>
               <button id="viewOpen" class="btn btn-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> Open SO Report</button>
+              <button id="openByTech" class="btn btn-ghost" title="One open-SO report per person, ready to send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg> By Employee</button>
               <a id="csv" class="btn btn-ghost" href="/report-csv" download><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> CSV</a>
               <button id="pdf" class="btn btn-ghost" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> <span id="pdfLabel">PDF</span></button>
             </div>
@@ -766,6 +779,18 @@
       <div class="modal-actions"><button class="btn btn-navy" id="okImpact">Close</button></div>
     </div>
   </div>
+  <!-- ===================== OPEN SOs BY EMPLOYEE ===================== -->
+  <div id="techOverlay" class="overlay">
+    <div class="modal modal-lg">
+      <div style="display:flex;align-items:flex-start">
+        <div><h3>Open SOs by employee</h3><p class="lead" id="techLead">One report each, to send out and get cleared.</p></div>
+        <button class="x" id="closeTech">&times;</button>
+      </div>
+      <div id="techBody"></div>
+      <div class="modal-actions"><button class="btn btn-navy" id="okTech">Close</button></div>
+    </div>
+  </div>
+
   <!-- ===================== ACTIVE USERS MODAL ===================== -->
   <div id="usersOverlay" class="overlay">
     <div class="modal">
@@ -1274,6 +1299,44 @@
         .catch(()=>{ $('tlChart').innerHTML='<div class="sc-empty">Could not load the timeline.</div>'; });
     }
     $('tlPeriod').onchange=loadTimeline;
+
+    /* Open SOs by employee — one report each, so a tech is sent only their own
+       orders to clear rather than the whole shop's list. */
+    function renderTechRoster(d){
+      const body=$('techBody');
+      if(d.error || !d.roster || !d.roster.length){
+        body.innerHTML='<div class="sc-empty">'+esc(d.error||'No open orders right now.')+'</div>';
+        $('techLead').textContent='One report each, to send out and get cleared.';
+        return;
+      }
+      $('techLead').textContent = d.total+' open order'+(d.total===1?'':'s')+' across '+d.roster.length+' '
+        +(d.roster.length===1?'person':'people')
+        +(d.generatedAt ? ' · from the open audit on '+new Date(d.generatedAt).toLocaleString() : '');
+      body.innerHTML = d.roster.map(r=>{
+        const initials=(r.name||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
+        const days=Math.floor(r.oldestDays||0);
+        const q='?who='+encodeURIComponent(r.name);
+        return '<div class="tech-row">'
+          +'<div class="tech-av">'+esc(initials)+'</div>'
+          +'<div class="tech-n"><b>'+esc(r.name)+'</b><span>'+r.orders+' open'
+            +(r.flagged?' · '+r.flagged+' with issues':'')
+            +(days?' · oldest '+days+'d':'')+'</span></div>'
+          +(r.blockers?'<span class="tech-pill red">'+r.blockers+' blocker'+(r.blockers===1?'':'s')+'</span>':'')
+          +'<div class="tech-acts">'
+            +'<a class="btn btn-ghost btn-sm2" href="/open-report'+q+'" target="_blank">View</a>'
+            +'<a class="btn btn-navy btn-sm2" href="/open-report-pdf'+q+'">PDF</a>'
+          +'</div></div>';
+      }).join('');
+    }
+    function loadTechRoster(){
+      $('techBody').innerHTML='<div class="sc-empty">Loading…</div>';
+      fetch('/api/open-roster').then(r=>r.json()).then(renderTechRoster)
+        .catch(()=>{ $('techBody').innerHTML='<div class="sc-empty">Could not load the roster.</div>'; });
+    }
+    const closeTech=()=>$('techOverlay').classList.remove('open');
+    $('openByTech').onclick=()=>{ $('techOverlay').classList.add('open'); loadTechRoster(); };
+    $('closeTech').onclick=closeTech; $('okTech').onclick=closeTech;
+    $('techOverlay').onclick=(e)=>{ if(e.target===$('techOverlay')) closeTech(); };
 
     const closeImpact=()=>$('impactOverlay').classList.remove('open');
     $('openImpact').onclick=()=>{ loadImpact(); loadTimeline(); $('impactOverlay').classList.add('open'); };

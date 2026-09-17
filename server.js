@@ -291,12 +291,73 @@ app.post('/api/connect-fullbay', requireAuth, (req, res) => startChild(['audit.j
 app.post('/api/run-open', requireAuth, (req, res) => startChild(['audit.js', 'open'], res, (currentUser(req) || {}).name, 'open'));
 
 app.get('/open-report', requireAuth, (req, res) => {
+  const who = (req.query.who || '').trim();
   const f = path.join(ROOT, 'open-report.html');
-  if (!fs.existsSync(f)) {
+  if (!fs.existsSync(f) && !who) {
     return res.send('<p style="font-family:Segoe UI;color:#566380;padding:24px">'
       + 'No open-SO audit yet — press <b>Run Open Audit</b> to build one.</p>');
   }
-  res.sendFile(f);
+  if (!who) return res.sendFile(f);
+  try {
+    const { html } = renderOpenFor(who);
+    res.set('Content-Type', 'text/html').send(html);
+  } catch (e) {
+    res.status(404).send('Could not build that report: ' + e.message);
+  }
+});
+
+/* ---------------- Per-employee open-SO reports ----------------
+ * One report per person, so each tech gets only their own open orders to clear
+ * rather than the whole shop's list.
+ */
+const OPEN_SOS = () => path.join(ROOT, 'open-sos.json');
+function readOpenOrders() {
+  if (!fs.existsSync(OPEN_SOS())) throw new Error('no open-SO audit yet — press Run Open Audit first');
+  const d = JSON.parse(fs.readFileSync(OPEN_SOS(), 'utf8'));
+  return { orders: d.orders || [], generatedAt: d.generatedAt || null };
+}
+
+/** Build one person's report. Returns { html, file, count }. */
+function renderOpenFor(who) {
+  const audit = require('./audit.js');
+  const { orders } = readOpenOrders();
+  const mine = orders.filter((o) => audit.openOrderOwner(o) === who);
+  if (!mine.length) throw new Error(`${who} has no open orders`);
+  // A per-person file, named safely — the name comes from Fullbay, not from us.
+  const safe = who.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'person';
+  const file = path.join(ROOT, `open-report-${safe}.html`);
+  const html = audit.writeOpenHtml(mine, { who, outFile: file });
+  return { html, file, count: mine.length, safe };
+}
+
+app.get('/api/open-roster', requireAuth, (req, res) => {
+  try {
+    const audit = require('./audit.js');
+    const { orders, generatedAt } = readOpenOrders();
+    res.json({ generatedAt, total: orders.length, roster: audit.openRoster(orders) });
+  } catch (e) {
+    res.json({ generatedAt: null, total: 0, roster: [], error: e.message });
+  }
+});
+
+app.get('/open-report-pdf', requireAuth, async (req, res) => {
+  const who = (req.query.who || '').trim();
+  try {
+    let htmlFile; let name;
+    if (who) {
+      const r = renderOpenFor(who);
+      htmlFile = r.file; name = `open-SOs-${r.safe}.pdf`;
+    } else {
+      htmlFile = path.join(ROOT, 'open-report.html');
+      if (!fs.existsSync(htmlFile)) return res.status(404).send('No open-SO audit yet.');
+      name = 'open-SO-report.pdf';
+    }
+    const pdfFile = htmlFile.replace(/\.html$/, '.pdf');
+    await htmlToPdf(htmlFile, pdfFile);
+    res.download(pdfFile, name);
+  } catch (e) {
+    res.status(500).send('Could not build PDF: ' + e.message);
+  }
 });
 
 // Corrects Bill To / Ship To on every Ready-to-Invoice estimate to match its
@@ -401,6 +462,27 @@ app.get('/report-csv', requireAuth, (req, res) => {
 const REPORT_HTML = path.join(ROOT, 'audit-report.html');
 const REPORT_PDF = path.join(ROOT, 'audit-report.pdf');
 let pdfBuilding = null; // shared promise so concurrent requests reuse one build
+/* Shared by the audit report and the per-employee open-SO reports. */
+async function htmlToPdf(htmlFile, pdfFile) {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.goto(require('url').pathToFileURL(htmlFile).href, { waitUntil: 'networkidle' });
+    // Force lazy images to load, or they are blank in the PDF.
+    await page.evaluate(() => {
+      document.querySelectorAll('img[loading]').forEach((img) => { img.loading = 'eager'; });
+      return Promise.all([...document.images].filter((i) => !i.complete)
+        .map((i) => new Promise((r) => { i.onload = i.onerror = r; })));
+    });
+    await page.pdf({
+      path: pdfFile, format: 'A4', printBackground: true,
+      margin: { top: '14mm', bottom: '14mm', left: '10mm', right: '10mm' },
+    });
+  } finally {
+    await browser.close();
+  }
+}
+
 async function buildReportPdf() {
   const browser = await chromium.launch();
   try {
