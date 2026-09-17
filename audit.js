@@ -823,7 +823,7 @@ async function runFull(page, context) {
   // problem cost us the report, so it is best-effort and comes first only in the
   // sense that it reads `results` before the writers touch anything.
   try {
-    if (require('./scorecard').recordRun(results)) log('Scorecard: run recorded.');
+    if (require('./scorecard').recordRun(results, new Date(), 'audit')) log('Scorecard: run recorded.');
   } catch (e) { log('Scorecard: could not record this run — ' + e.message); }
 
   writeCsv(results);
@@ -2498,6 +2498,11 @@ async function runOpenOnly(page, context) {
   fs.writeFileSync(dataPath('open-sos.json'),
     JSON.stringify({ generatedAt: new Date().toISOString(), orders: results }, null, 2), 'utf8');
   writeOpenHtml(results);
+  // Record it for the Impact timeline. Best-effort: a history problem must never
+  // cost the report that was just produced.
+  try {
+    if (require('./scorecard').recordRun(results, new Date(), 'open')) log('Open-SO run recorded.');
+  } catch (e) { log('Could not record this open run — ' + e.message); }
   const flagged = results.filter((r) => r.findings.length).length;
   log(`\nDone. ${flagged} of ${results.length} open orders have something outstanding.`);
   log('Reports written: open-report.html  and  open-sos.json');

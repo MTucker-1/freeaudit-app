@@ -268,6 +268,25 @@
   .sc-chips{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
   .sc-chip{font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;background:var(--navy-soft);color:var(--navy);white-space:nowrap}
   .sc-empty{padding:26px;text-align:center;color:var(--faint);font-size:14px}
+  /* Impact timeline */
+  .tl-head{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+  .tl-head .chart-title{flex:1}
+  #tlPeriod{font:inherit;font-size:13px;padding:6px 9px;border:1px solid var(--line);border-radius:9px;background:#fff;color:inherit}
+  .tl-totals{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .tl-tile{flex:1;min-width:104px;background:var(--navy-soft);border-radius:12px;padding:11px 13px}
+  .tl-tile .v{font-size:20px;font-weight:800;color:var(--navy);line-height:1.15;font-variant-numeric:tabular-nums}
+  .tl-tile .l{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);margin-top:3px}
+  .tl-row{display:flex;align-items:center;gap:10px;margin:7px 0;font-size:12.5px}
+  .tl-lbl{width:112px;flex:none;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tl-track{flex:1;height:18px;border-radius:6px;background:var(--line);overflow:hidden;display:flex}
+  .tl-track i{display:block;height:100%;transition:width .5s ease}
+  .tl-track i.r{background:var(--navy-2)}
+  .tl-track i.o{background:#9ec1f5}
+  .tl-val{width:104px;flex:none;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+  .tl-val .o{color:#6f8bb5;font-weight:600}
+  .tl-key{display:flex;gap:16px;margin-top:12px;font-size:11.5px;color:var(--dim)}
+  .tl-key i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  .tl-since{margin-top:10px;font-size:11.5px;color:var(--faint)}
   /* Automatic runs — lives inside the Settings modal, saved by its Save button */
   .sched-sec{margin-top:22px;padding-top:18px;border-top:1px solid var(--line)}
   /* "+ Add a time" lives in the header, not under the table: after the table it
@@ -728,6 +747,21 @@
         <div class="chart-title">Issues caught, by category</div>
         <div id="findChart" class="chart"></div>
       </div>
+      <div class="chart-block">
+        <div class="tl-head">
+          <div class="chart-title" style="margin:0">Service orders audited over time</div>
+          <select id="tlPeriod">
+            <option value="day">Daily</option>
+            <option value="week">Weekly</option>
+            <option value="month" selected>Monthly</option>
+            <option value="quarter">Quarterly</option>
+            <option value="year">Yearly</option>
+          </select>
+        </div>
+        <div class="tl-totals" id="tlTotals"></div>
+        <div id="tlChart" class="chart"></div>
+        <div class="tl-since" id="tlSince"></div>
+      </div>
       <p class="impact-note" id="impactNote"></p>
       <div class="modal-actions"><button class="btn btn-navy" id="okImpact">Close</button></div>
     </div>
@@ -1180,8 +1214,59 @@
     }
     $('schedOn').onchange=schedTouched;
 
+    /* Impact timeline — how many service orders have been audited over time.
+       Ready-to-Invoice and Open-SO totals are kept apart because they answer
+       different questions; the bar shows both stacked. */
+    function renderTimeline(d){
+      const rows=d.rows||[];
+      const t=d.totals||{ready:0,open:0,runs:0};
+      const a=d.allTime||t;
+      $('tlTotals').innerHTML =
+        '<div class="tl-tile"><div class="v">'+(t.ready+t.open).toLocaleString()+'</div><div class="l">SOs audited (shown)</div></div>'+
+        '<div class="tl-tile"><div class="v">'+t.ready.toLocaleString()+'</div><div class="l">Ready to invoice</div></div>'+
+        '<div class="tl-tile"><div class="v">'+t.open.toLocaleString()+'</div><div class="l">Open SOs</div></div>'+
+        '<div class="tl-tile"><div class="v">'+(a.ready+a.open).toLocaleString()+'</div><div class="l">All time</div></div>';
+
+      if(!rows.length){
+        $('tlChart').innerHTML='<div class="sc-empty">No audits recorded yet. Run an audit and this starts building.</div>';
+        $('tlSince').textContent='';
+        return;
+      }
+      const peak=Math.max(1,...rows.map(r=>r.ready+r.open));
+      $('tlChart').innerHTML = rows.slice().reverse().map(r=>{
+        const tot=r.ready+r.open;
+        const rw=Math.round(r.ready/peak*100), ow=Math.round(r.open/peak*100);
+        return '<div class="tl-row">'
+          +'<span class="tl-lbl" title="'+esc(r.label)+'">'+esc(r.label)+'</span>'
+          +'<span class="tl-track"><i class="r" data-w="'+rw+'" style="width:0"></i><i class="o" data-w="'+ow+'" style="width:0"></i></span>'
+          +'<span class="tl-val">'+tot.toLocaleString()+(r.open?' <span class="o">('+r.open+' open)</span>':'')+'</span>'
+          +'</div>';
+      }).join('')
+      + '<div class="tl-key"><span><i style="background:var(--navy-2)"></i>Ready to invoice</span>'
+      + '<span><i style="background:#9ec1f5"></i>Open SOs</span>'
+      + '<span>'+(t.runs||0)+' audit run'+((t.runs||0)===1?'':'s')+' in this period</span></div>';
+
+      // Animate after layout, the same way the other Impact bars do.
+      requestAnimationFrame(()=>{ setTimeout(()=>{
+        document.querySelectorAll('#tlChart .tl-track i').forEach(b=>{ b.style.width=b.dataset.w+'%'; });
+      },60); });
+
+      $('tlSince').textContent = d.since
+        ? ('Recorded since ' + new Date(d.since).toLocaleDateString([], {month:'long', day:'numeric', year:'numeric'}))
+        : '';
+    }
+
+    function loadTimeline(){
+      const p=$('tlPeriod').value;
+      $('tlChart').innerHTML='<div class="sc-empty">Loading…</div>';
+      fetch('/api/timeline?period='+encodeURIComponent(p))
+        .then(r=>r.json()).then(renderTimeline)
+        .catch(()=>{ $('tlChart').innerHTML='<div class="sc-empty">Could not load the timeline.</div>'; });
+    }
+    $('tlPeriod').onchange=loadTimeline;
+
     const closeImpact=()=>$('impactOverlay').classList.remove('open');
-    $('openImpact').onclick=()=>{ loadImpact(); $('impactOverlay').classList.add('open'); };
+    $('openImpact').onclick=()=>{ loadImpact(); loadTimeline(); $('impactOverlay').classList.add('open'); };
     $('closeImpact').onclick=closeImpact; $('okImpact').onclick=closeImpact;
     $('impactOverlay').onclick=(e)=>{ if(e.target===$('impactOverlay')) closeImpact(); };
 

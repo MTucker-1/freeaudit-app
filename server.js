@@ -210,6 +210,18 @@ app.get('/api/scorecard', requireAuth, (req, res) => {
   }
 });
 
+// How many service orders have been audited over time, bucketed by period.
+// Reads the scorecard history, so every run already recorded counts.
+app.get('/api/timeline', requireAuth, (req, res) => {
+  const period = String(req.query.period || 'month');
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 24, 1), 120);
+  try {
+    res.json(require('./scorecard').timeline(period, limit));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Latest-run impact summary for the dashboard.
 app.get('/api/summary', requireAuth, (req, res) => {
   const f = path.join(ROOT, 'audit-summary.json');

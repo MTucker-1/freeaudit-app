@@ -48,7 +48,7 @@ function personFor(order, finding) {
  * recordRun — append one audit to the history. Safe to call on every run;
  * failures are swallowed so a scorecard problem can never cost you a report.
  */
-function recordRun(results, when = new Date()) {
+function recordRun(results, when = new Date(), kind = 'audit') {
   try {
     const people = {};
     const bump = (name, key) => {
@@ -68,6 +68,10 @@ function recordRun(results, when = new Date()) {
     h.runs.push({
       at: when.toISOString(),
       week: weekOf(when),
+      // 'audit' = Ready to Invoice, 'open' = the Open-SO pass. Recorded so the
+      // Impact timeline can total them separately; older entries have no kind
+      // and are read as Ready-to-Invoice, which is all that used to be recorded.
+      kind,
       orders: results.length,
       flagged: results.filter((r) => (r.findings || []).length).length,
       people,
@@ -143,4 +147,67 @@ function aggregate(opts = {}) {
   };
 }
 
-module.exports = { recordRun, aggregate, weekOf, readHistory, HISTORY };
+/* ---------------------------------------------------------------------------
+ * timeline(period) — how many service orders were audited, bucketed by date.
+ *
+ * Reads the same history the scorecard keeps, so nothing new has to be stored
+ * and every run already recorded counts. Ready-to-Invoice and Open-SO totals
+ * are kept apart because they answer different questions.
+ * ------------------------------------------------------------------------- */
+const PERIODS = ['day', 'week', 'month', 'quarter', 'year'];
+
+/** Bucket key + a label a person can read, for one date. */
+function bucketOf(d, period) {
+  const y = d.getFullYear();
+  const mo = d.getMonth();
+  const pad = (n) => String(n).padStart(2, '0');
+  if (period === 'day') {
+    return { key: `${y}-${pad(mo + 1)}-${pad(d.getDate())}`,
+      label: d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) };
+  }
+  if (period === 'week') {
+    const wk = weekOf(d);
+    return { key: wk, label: 'wk of ' + new Date(wk + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' }) };
+  }
+  if (period === 'month') {
+    return { key: `${y}-${pad(mo + 1)}`, label: d.toLocaleDateString([], { month: 'long', year: 'numeric' }) };
+  }
+  if (period === 'quarter') {
+    const q = Math.floor(mo / 3) + 1;
+    return { key: `${y}-Q${q}`, label: `Q${q} ${y}` };
+  }
+  return { key: String(y), label: String(y) };
+}
+
+function timeline(period = 'month', limit = 24) {
+  const p = PERIODS.includes(period) ? period : 'month';
+  const h = readHistory();
+  const buckets = new Map();
+
+  for (const run of (h.runs || [])) {
+    const d = new Date(run.at);
+    if (isNaN(d)) continue;
+    const { key, label } = bucketOf(d, p);
+    const b = buckets.get(key) || { key, label, ready: 0, open: 0, runs: 0, flagged: 0 };
+    // Runs recorded before the Open-SO pass was tracked carry no kind.
+    if (run.kind === 'open') b.open += run.orders || 0; else b.ready += run.orders || 0;
+    b.runs += 1;
+    b.flagged += run.flagged || 0;
+    buckets.set(key, b);
+  }
+
+  const rows = [...buckets.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const recent = rows.slice(-limit);
+  const totals = recent.reduce((t, r) => ({
+    ready: t.ready + r.ready, open: t.open + r.open, runs: t.runs + r.runs, flagged: t.flagged + r.flagged,
+  }), { ready: 0, open: 0, runs: 0, flagged: 0 });
+
+  // All-time, regardless of the window being shown.
+  const all = rows.reduce((t, r) => ({
+    ready: t.ready + r.ready, open: t.open + r.open, runs: t.runs + r.runs, flagged: t.flagged + r.flagged,
+  }), { ready: 0, open: 0, runs: 0, flagged: 0 });
+
+  return { period: p, rows: recent, totals, allTime: all, since: (h.runs && h.runs[0]) ? h.runs[0].at : null };
+}
+
+module.exports = { recordRun, aggregate, timeline, weekOf, readHistory, HISTORY, PERIODS };
