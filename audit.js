@@ -1177,11 +1177,20 @@ const STATUS_VOCAB = /^(complete|completed|done|in ?progress|in-progress|queued|
 // Cell values that mean the unit IS done.
 const COMPLETE_RE = /^(complete|completed|done|yes|y|✓|x)$/i;
 
-// Which tabs to read: current-year location tabs (e.g. "...26") OR a "Full Data" tab.
+// Which tabs to read: current-year location tabs (e.g. "...26"), a "Full Data"
+// tab, or a named live work list.
 function currentYearTabFilter(year) {
   const short = year.slice(2);
   const yearRe = new RegExp(`\\b(${short}|${year})\\b`); // tab must mention e.g. "26" or "2026"
-  return (name) => yearRe.test(name || '') || /full\s*data/i.test(name || '');
+  // The BIT trackers keep their rows on a year-stamped or "Full Data" tab. The
+  // newer project sheets (the Dallas PepsiCo DOT/FHWA tracker) keep the live work
+  // list on an undated "Priority List" tab instead, so it has to be named here or
+  // that sheet contributes nothing at all. Named explicitly rather than admitting
+  // every undated tab: that would read 10+ tabs per sheet and blow the Sheets API
+  // per-minute read quota, and would pull in history tabs whose reverted rows
+  // would wrongly read as complete (a "complete" in ANY tab wins).
+  const workListRe = /^\s*priority list\s*$/i;
+  return (name) => yearRe.test(name || '') || /full\s*data/i.test(name || '') || workListRe.test(name || '');
 }
 
 // Live sheet URLs/IDs to read. Supports an array (CONFIG.sheets) for multiple

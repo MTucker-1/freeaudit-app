@@ -41,6 +41,14 @@
   button{font-family:inherit;cursor:pointer}
   .hidden{display:none!important}
   .hint{font-size:12px;color:var(--faint);margin-top:6px;line-height:1.5}
+  /* Shipped trackers: shown so people can see what is being read, but they come
+     from the app itself, so there is nothing to edit here. */
+  .shipped{display:flex;flex-direction:column;gap:6px}
+  .shipped a{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--navy);
+    text-decoration:none;background:var(--navy-soft);border-radius:8px;padding:7px 10px}
+  .shipped a:hover{text-decoration:underline}
+  .shipped svg{width:13px;height:13px;flex:none;opacity:.65}
+  .shipped .empty{font-size:12px;color:var(--faint)}
   h1,h2,h3{letter-spacing:-.023em}
   ::selection{background:var(--red);color:#fff}
   :focus-visible{outline:none;box-shadow:var(--ring);border-radius:10px}
@@ -71,6 +79,7 @@
   .tabs button{flex:1;border:0;background:transparent;color:var(--dim);font-weight:600;font-size:14px;
     padding:9px;border-radius:9px;transition:.15s}
   .tabs button.active{background:#fff;color:var(--navy);box-shadow:0 1px 4px rgba(11,35,65,.12)}
+  .auth-hint{font-size:12.5px;line-height:1.5;color:var(--dim);margin:-6px 0 16px}
   .field{margin-bottom:14px}
   .field label{display:block;font-size:12.5px;font-weight:600;color:var(--dim);margin-bottom:6px}
   .field input{width:100%;padding:12px 14px;border:1.5px solid var(--line);border-radius:11px;font-size:14px;
@@ -79,6 +88,8 @@
   .auth-err{background:var(--red-soft);color:var(--red-dark);font-size:13px;font-weight:500;
     padding:10px 13px;border-radius:10px;margin-bottom:14px;display:none}
   .auth-err.show{display:block;animation:rise .25s}
+  /* Same strip, but for "here is what to do next" rather than "you got it wrong". */
+  .auth-err.info{background:var(--navy-soft);color:var(--navy)}
 
   /* ---------- BUTTONS ---------- */
   .btn{font-size:14px;font-weight:600;border-radius:12px;padding:12px 20px;border:1.5px solid var(--line);
@@ -467,7 +478,7 @@
       </div>
       <div class="tabs">
         <button id="tabLogin" class="active">Sign in</button>
-        <button id="tabReg">Create account</button>
+        <button id="tabReg">Set up account</button>
       </div>
       <div id="authErr" class="auth-err"></div>
 
@@ -478,11 +489,14 @@
       </form>
 
       <form id="regForm" class="hidden">
+        <p class="auth-hint">Already use FreeAudit on another PC? Enter the <b>same email and
+          password</b> &mdash; it stays your one login. New here? Pick any password.</p>
         <div class="field"><label>Full name</label><input type="text" id="rg_name" autocomplete="name" required></div>
         <div class="field"><label>Email</label><input type="email" id="rg_email" autocomplete="email" required></div>
         <div class="field"><label>Password (6+ characters)</label><input type="password" id="rg_pw" autocomplete="new-password" required></div>
+        <div class="field"><label>Confirm password</label><input type="password" id="rg_pw2" autocomplete="new-password" required></div>
         <div class="field"><label>Signup code</label><input type="text" id="rg_code" autocomplete="off" placeholder="Ask your administrator" required></div>
-        <button class="btn btn-red btn-block" type="submit">Create account</button>
+        <button class="btn btn-red btn-block" type="submit">Set up my account</button>
       </form>
     </div>
   </div>
@@ -612,7 +626,8 @@
       <div class="sgrid">
         <div class="field"><label>Orders to audit (0 = all)</label><input type="number" id="maxOrders" min="0"></div>
         <div class="field"><label>Tracker year (blank = current)</label><input type="text" id="sheetYear" placeholder="auto"></div>
-        <div class="field full"><label>Live Google Sheets links — one per line (read live, never stale)</label><textarea id="sheetLinks" rows="2" placeholder="https://docs.google.com/spreadsheets/d/.../edit" style="width:100%;font:inherit;padding:8px;box-sizing:border-box"></textarea><div id="saHint" class="hint hidden"></div></div>
+        <div class="field full"><label>Trackers everyone audits against</label><div id="shippedSheets" class="shipped"></div></div>
+        <div class="field full"><label>Your own extra Google Sheets links — one per line</label><textarea id="sheetLinks" rows="2" placeholder="https://docs.google.com/spreadsheets/d/.../edit" style="width:100%;font:inherit;padding:8px;box-sizing:border-box"></textarea><div id="saHint" class="hint hidden"></div></div>
         <div class="field full"><label>Google Sheets API key (enables live reading)</label><input type="password" id="googleApiKey" autocomplete="off" placeholder="not set"></div>
         <div class="field full"><label>Tracker file (.xlsx fallback, blank = newest)</label><input type="text" id="sheetFile" placeholder="auto-detect newest .xlsx — used only if live reading is off/unavailable"></div>
         <div class="field full"><label>Signup code (people need this to create an account)</label><input type="text" id="signupCode"></div>
@@ -813,8 +828,10 @@
   let evtSource = null;
 
   /* ---------- AUTH ---------- */
-  function showErr(m){ const e=$('authErr'); e.textContent=m; e.classList.add('show'); }
-  function clearErr(){ $('authErr').classList.remove('show'); }
+  function showErr(m){ const e=$('authErr'); e.textContent=m; e.classList.remove('info'); e.classList.add('show'); }
+  /* Not a failure, just directions — same strip, calmer colour. */
+  function showNote(m){ const e=$('authErr'); e.textContent=m; e.classList.add('info','show'); }
+  function clearErr(){ $('authErr').classList.remove('show','info'); }
   $('tabLogin').onclick = () => { $('tabLogin').classList.add('active'); $('tabReg').classList.remove('active'); $('loginForm').classList.remove('hidden'); $('regForm').classList.add('hidden'); clearErr(); };
   $('tabReg').onclick   = () => { $('tabReg').classList.add('active'); $('tabLogin').classList.remove('active'); $('regForm').classList.remove('hidden'); $('loginForm').classList.add('hidden'); clearErr(); };
 
@@ -823,14 +840,25 @@
     const r = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ email:$('li_email').value, password:$('li_pw').value }) });
     const d = await r.json();
-    if (r.ok) enterApp(); else showErr(d.error || 'Sign in failed.');
+    if (r.ok) return enterApp();
+    // A PC that has never seen this account is not a wrong password. Carry the email
+    // straight over to setup so the same login can be claimed here in one step.
+    if (d.needsSetup) {
+      $('tabReg').click();
+      $('rg_email').value = $('li_email').value;
+      $('rg_name').focus();
+      return showNote('First time on this PC. Enter the same email and password you always use, plus the signup code, and it stays your same login.');
+    }
+    showErr(d.error || 'Sign in failed.');
   };
   $('regForm').onsubmit = async (e) => {
     e.preventDefault(); clearErr();
+    // Typed once, it would silently become the password on this PC — so confirm it.
+    if ($('rg_pw').value !== $('rg_pw2').value) return showErr('The two passwords do not match.');
     const r = await fetch('/api/register', { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ name:$('rg_name').value, email:$('rg_email').value, password:$('rg_pw').value, code:$('rg_code').value }) });
     const d = await r.json();
-    if (r.ok) enterApp(); else showErr(d.error || 'Could not create account.');
+    if (r.ok) enterApp(); else showErr(d.error || 'Could not set up your account.');
   };
 
   async function checkAuth(){
@@ -1430,7 +1458,17 @@
     fetch('/api/config').then(r=>r.json()).then(c=>{
       $('maxOrders').value=c.maxOrders??0; $('sheetFile').value=c.sheetFile||''; $('sheetYear').value=c.sheetYear||''; $('signupCode').value=c.signupCode||'';
       $('sheetLinks').value=(c.sheets||[]).join('\n');
-      if(c.serviceAccountEmail){ $('saHint').innerHTML='Any tracker <b>shared with '+esc(c.serviceAccountEmail)+'</b> (Viewer) is read automatically — '+'only list a sheet above if it is NOT shared with that address.'; $('saHint').classList.remove('hidden'); }
+      $('shippedSheets').innerHTML = (c.shippedSheets||[]).length
+        ? (c.shippedSheets||[]).map(sh =>
+            '<a href="'+esc(sh.url)+'" target="_blank" rel="noopener">'
+            + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>'
+            + esc(sh.name)+'</a>').join('')
+        : '<div class="empty">None.</div>';
+      /* Sharing a sheet with the service account is necessary but NOT sufficient:
+         picking it up without being listed needs the Drive API, which is off for
+         this project, so auto-discovery never runs. Saying "read automatically"
+         here is what leads people to share a tracker and assume it is covered. */
+      if(c.serviceAccountEmail){ $('saHint').innerHTML='Share each tracker with <b>'+esc(c.serviceAccountEmail)+'</b> (Viewer), then paste its link above — '+'a sheet that is shared but not listed is <b>not</b> read.'; $('saHint').classList.remove('hidden'); }
       $('googleApiKey').value=''; $('googleApiKey').placeholder = c.googleApiKeySet ? '•••••••• (saved — leave blank to keep)' : 'not set';
       $('fullbayUser').value=c.fullbayUser||'';
       $('fullbayPassword').value=''; $('fullbayPassword').placeholder = c.fullbayCredsSet ? '•••••••• (saved — leave blank to keep)' : 'enter password';

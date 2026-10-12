@@ -14,7 +14,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');
-const { readConfig, writeConfig } = require('./settings');
+const { readConfig, writeConfig, SHIPPED_SHEETS, sheetId } = require('./settings');
 const { ensureDataDir } = require('./paths');
 const runlock = require('./runlock');
 const gsheets = require('./gsheets');
@@ -108,20 +108,39 @@ app.post('/api/register', (req, res) => {
     return res.status(400).json({ error: 'Enter a name, email, and a password of at least 6 characters.' });
   }
   const users = readUsers();
-  if (users.find((u) => u.email.toLowerCase() === email.toLowerCase())) {
+  const at = users.findIndex((u) => u.email.toLowerCase() === email.toLowerCase());
+  // An account already on THIS PC with that email, and the signup code checked out:
+  // treat it as "this is me, on this machine" and set the password, instead of a
+  // 409 nobody can recover from (there is no password-reset email, and every local
+  // account sees the same per-PC data, so no boundary is being crossed). With no
+  // signup code configured there is nothing gating it, so keep the old refusal.
+  if (at >= 0 && !requiredCode) {
     return res.status(409).json({ error: 'An account with that email already exists — try signing in.' });
   }
   const salt = crypto.randomBytes(16).toString('hex');
-  const user = { name: name.trim(), email: email.trim(), salt, hash: hashPw(password, salt), created: new Date().toISOString() };
-  users.push(user); writeUsers(users);
+  const fields = { name: name.trim(), email: email.trim(), salt, hash: hashPw(password, salt) };
+  const user = at >= 0
+    ? Object.assign(users[at], fields)
+    : (users.push(Object.assign(fields, { created: new Date().toISOString() })), users[users.length - 1]);
+  writeUsers(users);
   startSession(res, user);
-  res.json({ ok: true });
+  res.json({ ok: true, adopted: at >= 0 });
 });
 
 app.post('/api/login', (req, res) => {
   const { email, password } = req.body || {};
   const user = readUsers().find((u) => u.email.toLowerCase() === (email || '').toLowerCase());
-  if (!user || hashPw(password || '', user.salt) !== user.hash) {
+  // Accounts live on the machine that created them (users.json never leaves the PC),
+  // so a fresh install genuinely has never heard of this person. Saying "wrong
+  // password" sends them hunting for a typo; say it plainly and let the UI offer to
+  // set the SAME login up here.
+  if (!user) {
+    return res.status(404).json({
+      needsSetup: true,
+      error: 'This PC does not have your account yet — set up the same login here.',
+    });
+  }
+  if (hashPw(password || '', user.salt) !== user.hash) {
     return res.status(401).json({ error: 'Wrong email or password.' });
   }
   startSession(res, user);
@@ -404,7 +423,12 @@ app.get('/api/config', requireAuth, (req, res) => {
     maxOrders: c.maxOrders, sheetFile: c.sheetFile, sheetYear: c.sheetYear,
     checkDuplicatePhotos: c.checkDuplicatePhotos, checkSheetCompletion: c.checkSheetCompletion,
     signupCode: c.signupCode,
-    sheets: Array.isArray(c.sheets) ? c.sheets : (c.sheetUrl ? [c.sheetUrl] : []),
+    // The editable box shows only the person's OWN links. The shipped trackers are
+    // listed separately and read-only: they come from code, so writing them back
+    // into config.json would leave a stale copy behind if one is ever changed.
+    sheets: (Array.isArray(c.sheets) ? c.sheets : (c.sheetUrl ? [c.sheetUrl] : []))
+      .filter((u) => !SHIPPED_SHEETS.some((sh) => sheetId(sh.url) === sheetId(u))),
+    shippedSheets: SHIPPED_SHEETS,
     googleApiKeySet: googleApiKeySet(), // whether a live-read key is saved; never the key itself
     // Sheets must be shared with this address for the tracker check to read them.
     serviceAccountEmail: gsheets.serviceAccountEmail(),
