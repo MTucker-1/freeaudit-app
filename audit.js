@@ -16,6 +16,7 @@ const path = require('path');
 const crypto = require('crypto');
 const ExcelJS = require('exceljs');
 const gsheets = require('./gsheets');
+const mapocr = require('./mapocr');
 const vorto = require('./vorto');
 const { runAudit, runOpenAudit, isServiceCall, classify } = require('./checks');
 const { DATA_DIR, dataPath } = require('./paths');
@@ -607,6 +608,11 @@ async function runFull(page, context) {
     fs.rmSync(photosDir, { recursive: true, force: true }); // fresh each run
     fs.mkdirSync(photosDir, { recursive: true });
   }
+  /* One OCR worker for the whole run (Check I reads the trip time off the travel
+   * photos). Starting tesseract takes seconds, so a worker per photo would cost
+   * more than the audit. */
+  const ocr = doPhotos ? await mapocr.createReader(log) : null;
+  if (ocr && ocr.ok) log('  Reading trip times off travel photos.\n');
   for (let i = 0; i < limit; i++) {
     const r = rows[i];
     process.stdout.write(`  [${i + 1}/${limit}] ${r.soNumber} ... `);
@@ -686,9 +692,8 @@ async function runFull(page, context) {
           ),
         });
 
-        // Every photo on THIS order with the moment it was uploaded — Check I
-        // reads it to time the drives.
-        const orderPhotos = [];
+        // What OCR read off each travel item's photos, keyed by action-item number.
+        const driveReadings = {};
 
         // Download photos: save each locally (for the report) and fingerprint it.
         // Photo-URL lookups and the downloads themselves run concurrently (capped),
@@ -706,8 +711,27 @@ async function runFull(page, context) {
           for (const s of saved) {
             if (!s) continue;
             allPhotos.push({ soNumber: so.soNumber, aiNumber: s.ai.number || s.ai.id, technician: s.ai.technician || '', url: s.url, uploadedAt: s.uploadedAt, hash: s.hash, localFile: s.localFile });
-            orderPhotos.push({ aiNumber: s.ai.number || s.ai.id, uploadedAt: s.uploadedAt });
             photoCt++;
+          }
+
+          /* Read the trip time off the travel items' photos (Check I). Only those
+           * items are OCR'd — running tesseract over every repair photo would add
+           * minutes to the audit for nothing. */
+          if (ocr && ocr.ok) {
+            const driveSaved = saved.filter((s) => s && DRIVE_ITEM_RE.test(s.ai.originalNote || ''));
+            for (const s of driveSaved) {
+              const key = String(s.ai.number || s.ai.id);
+              const r = await ocr.read(path.join(photosDir, s.localFile));
+              const prev = driveReadings[key];
+              const count = (prev ? prev.photoCount : 0) + 1;
+              // Several photos on one item: keep the shortest trip time read, and
+              // remember we looked even when nothing could be read.
+              const better = r && r.minutes != null
+                && (!prev || prev.minutes == null || r.minutes < prev.minutes);
+              driveReadings[key] = better
+                ? { minutes: r.minutes, all: r.all, file: s.localFile, photoCount: count }
+                : { ...(prev || { minutes: null, all: [] }), photoCount: count };
+            }
           }
 
           /* Photos attached to the ORDER as a whole, not to any action item —
@@ -728,15 +752,14 @@ async function runFull(page, context) {
               technician: '',                  // order-level photos have no tech
               url: s.url, uploadedAt: s.uploadedAt, hash: s.hash, localFile: s.localFile,
             });
-            // Order-level photos anchor a drive too: they are often the arrival
-            // shots taken at the unit.
-            orderPhotos.push({ aiNumber: SO_LEVEL_PHOTO, uploadedAt: s.uploadedAt });
             photoCt++;
           }
-
-          // Check I — how much longer the drive was billed than the photos show.
-          driveTimeFindings(so, orderPhotos).forEach((f) => findings.push(f));
         }
+
+        // Check I — hours billed for travel against the trip time on the photo.
+        // Outside the photo block on purpose: an item with NO photo still needs
+        // reporting, and that is exactly the case doPhotos=false would hide.
+        driveTimeFindings(so, driveReadings).forEach((f) => findings.push(f));
         log(`${so.actionItems.length} items, ${findings.length} issue(s)` + (doPhotos ? `, ${photoCt} photos` : ''));
       }
     } catch (e) {
@@ -798,6 +821,7 @@ async function runFull(page, context) {
   });
   results.forEach((r) => { delete r._dupKeys; r.photos = allPhotos.filter((p) => p.soNumber === r.soNumber); });
   log(`Photo fingerprints: ${allPhotos.length} photos, ${Object.keys(dupInfo).length} reused across orders.`);
+  if (ocr) await ocr.close(); // tesseract holds worker processes open
 
   // --- Check H — is each order's MT (PO) resolved in the Vorto portal? ---
   // LIVE read: drives the real portal each run (no cached copy to go stale).
@@ -1330,72 +1354,57 @@ function sheetPeriodRank(title) {
 // because Fullbay has no travel flag — the service text is all there is.
 const DRIVE_ITEM_RE = /drive to unit|return from unit|parts\s*run/i;
 
-// A gap longer than this between the anchor photo and the arrival photo is not a
-// drive — it is somebody adding photos the next day. Those are reported without a
-// variance rather than counted as a 20-hour trip.
-const MAX_PLAUSIBLE_TRIP_HOURS = 12;
-
-const hhmm = (sec) => new Date(sec * 1000).toLocaleString('en-US',
-  { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 const asHrs = (min) => (min / 60).toFixed(2);
+const asMin = (min) => `${Math.round(min)} min`;
 
 /*
- * Compare what was billed for travel against what the photo upload times show.
+ * Compare what was billed for travel against the trip time printed on the photo.
  *
- * Fullbay stores a DURATION (invoicedHours) but the photos give CLOCK times, so a
- * drive needs two marks: the arrival is this item's earliest photo, and the start
- * is the latest photo anywhere on the order taken before it — the shot from
- * wherever they left. Earliest-only on the arrival side is deliberate: photos
- * added a day later are common, and taking the earliest means a straggler cannot
- * stretch the trip.
+ * Each travel item carries a maps screenshot showing how long the trip takes
+ * ("31 min Fastest", "25 min"). That printed figure is the only estimate there
+ * is — Fullbay holds no travel time of its own — so the variance is simply the
+ * invoiced hours minus those minutes.
  *
- * Every variance is reported, with no tolerance — the point is to see how much
- * more was billed than the photos show, and judge it per order.
+ * `readings` maps an action-item key to what OCR got off its photos
+ * ({ minutes, file }), best (shortest) reading per item.
+ *
+ * Every overage is reported with no tolerance, as asked: the point is to see how
+ * much more was billed than the trip takes and judge each one. Billing at or
+ * under the printed time is not flagged.
  */
-function driveTimeFindings(so, orderPhotos) {
+function driveTimeFindings(so, readings) {
   const out = [];
-  const stamps = (orderPhotos || []).filter((p) => p.uploadedAt);
-  if (!stamps.length) return out;
-
   for (const ai of so.actionItems) {
     if (!DRIVE_ITEM_RE.test(ai.originalNote || '')) continue;
     const key = String(ai.number || ai.id);
-    const mine = stamps.filter((p) => String(p.aiNumber) === key).map((p) => p.uploadedAt).sort((a, b) => a - b);
-    if (!mine.length) continue;
-
-    const arrival = mine[0];
     const service = String(ai.originalNote || '').replace(/\s*Add\s+Address\s*$/i, '').trim();
     const invoicedMin = (ai.invoicedHours || 0) * 60;
-    const window = mine.length > 1 ? `${hhmm(mine[0])} to ${hhmm(mine[mine.length - 1])}` : hhmm(mine[0]);
+    const seen = readings[key];
 
-    // The last photo taken anywhere on this order BEFORE they arrived.
-    const before = stamps.map((p) => p.uploadedAt).filter((t) => t < arrival).sort((a, b) => b - a);
-    const anchor = before.length ? before[0] : null;
-    const tripMin = anchor ? (arrival - anchor) / 60 : null;
-
-    if (tripMin === null || tripMin > MAX_PLAUSIBLE_TRIP_HOURS * 60) {
-      // Nothing dependable to measure from. Still surface the numbers rather than
-      // skipping the item in silence — a 1.00 hr drive with one photo is exactly
-      // what somebody wants to look at by hand.
+    // No photo, or one nothing could be read from. Say which, and still show the
+    // hours — a 1.00 hr drive with no evidence is worth a look by eye.
+    if (!seen || seen.minutes == null) {
       out.push({
         check: 'I', severity: 'warning', technician: ai.technician || '',
-        title: 'Drive time billed, no photo to time it against',
-        detail: `"${service}" billed ${asHrs(invoicedMin)} hr. Photos uploaded ${window}`
-          + (anchor ? ', but the previous photo is more than ' + MAX_PLAUSIBLE_TRIP_HOURS + ' hours earlier' : ' with nothing earlier on the order')
-          + ' — the trip could not be timed.',
+        title: seen ? 'Drive time billed, no trip time on the photo' : 'Drive time billed with no photo',
+        detail: `"${service}" billed ${asHrs(invoicedMin)} hr (${asMin(invoicedMin)}), but `
+          + (seen
+            ? `no trip time could be read from the ${seen.photoCount === 1 ? 'photo' : seen.photoCount + ' photos'} attached.`
+            : 'no photo is attached to compare it against.'),
       });
       continue;
     }
 
-    const varianceMin = invoicedMin - tripMin;
-    if (varianceMin <= 0) continue; // billed no more than the photos show
+    const varianceMin = invoicedMin - seen.minutes;
+    if (varianceMin <= 0) continue; // billed no more than the trip takes
 
     out.push({
       check: 'I', severity: 'warning', technician: ai.technician || '',
-      title: 'Drive time billed over what the photos show',
-      detail: `"${service}" billed ${asHrs(invoicedMin)} hr, but the photos put the trip at `
-        + `${asHrs(tripMin)} hr (${hhmm(anchor)} to ${hhmm(arrival)}) — `
-        + `${asHrs(varianceMin)} hr more than shown.`,
+      title: 'Drive time billed over the trip time on the photo',
+      detail: `"${service}" billed ${asHrs(invoicedMin)} hr (${asMin(invoicedMin)}), but the photo `
+        + `shows the trip at ${asMin(seen.minutes)}`
+        + (seen.all && seen.all.length > 1 ? ` (routes shown: ${seen.all.map((m) => asMin(m)).join(', ')})` : '')
+        + ` — ${asMin(varianceMin)} more than the trip takes.`,
     });
   }
   return out;

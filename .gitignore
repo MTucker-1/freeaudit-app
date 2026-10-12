@@ -73,3 +73,7 @@ so-*.png
 # Scheduled-run history and UI probe screenshots — local runtime output
 schedule-log.txt
 settings-probe.png
+
+# OCR language data: downloaded at runtime by tesseract.js, bundled by the installer
+eng.traineddata
+*.traineddata

@@ -32,6 +32,17 @@ Copy-Item (Join-Path $proj 'public') (Join-Path $app 'public') -Recurse -Force
 Write-Host '[3/9] node_modules…'
 Copy-Item (Join-Path $proj 'node_modules') (Join-Path $app 'node_modules') -Recurse -Force
 
+# OCR language data for Check I (reads the trip time off travel photos). Without
+# it tesseract downloads 5 MB on first use, so an install on a machine with no
+# internet — or a scheduled run before anyone opens the app — would lose the
+# check. mapocr.js looks for it beside the code, which is where this puts it.
+$trained = Join-Path $proj 'eng.traineddata'
+if (Test-Path $trained) {
+  Copy-Item $trained $app -Force
+} else {
+  Write-Host '        WARNING: eng.traineddata missing — run an audit once to fetch it, or Check I will download it per install'
+}
+
 Write-Host '[4/9] Portable Node…'
 Copy-Item $nodeExe (Join-Path $app 'node.exe') -Force
 
