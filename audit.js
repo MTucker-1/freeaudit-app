@@ -374,9 +374,34 @@ async function fetchActionItemPhotoUrls(context, aiId) {
   const resp = await context.request.get(url).catch(() => null);
   if (!resp || !resp.ok()) return [];
   const body = await resp.text();
-  // Stored photo files look like /files/<n>/RepairOrderActionItem/<token>.jpg?<ts>
-  const matches = [...body.matchAll(/["'](\/files\/[^"']+?\.(?:jpe?g|png|webp|gif))(?:\?[^"']*)?["']/gi)];
-  return [...new Set(matches.map((m) => m[1]))];
+  return photoRefsFrom(body);
+}
+
+/*
+ * Pull the photo files out of an editImages fragment, each with the moment it
+ * was uploaded.
+ *
+ * Stored files look like /files/<n>/RepairOrderActionItem/<token>.jpg?<ts>, and
+ * that `?<ts>` is a unix-seconds UPLOAD time — verified against the files'
+ * Last-Modified headers, which it tracks to within 2-3 seconds. It is the only
+ * time available: Fullbay strips EXIF on upload, so the downloaded photo itself
+ * carries no timestamp at all. Check I reads these to work out how long a drive
+ * actually took.
+ *
+ * Each file appears more than once in the fragment (thumbnail and full size, and
+ * sometimes with a trailing escape character), so keep the EARLIEST stamp seen
+ * for a given path.
+ */
+function photoRefsFrom(body) {
+  const seen = new Map();
+  for (const m of body.matchAll(/["'](\/files\/[^"']+?\.(?:jpe?g|png|webp|gif))(\?\d+)?[^"']*["']/gi)) {
+    const url = m[1];
+    const ts = m[2] ? parseInt(m[2].slice(1), 10) : 0;
+    const prev = seen.get(url);
+    if (!prev) seen.set(url, { url, uploadedAt: ts || null });
+    else if (ts && (!prev.uploadedAt || ts < prev.uploadedAt)) prev.uploadedAt = ts;
+  }
+  return [...seen.values()];
 }
 
 /*
@@ -395,8 +420,7 @@ async function fetchSoPhotoUrls(context, repairOrderId) {
   const resp = await context.request.get(url).catch(() => null);
   if (!resp || !resp.ok()) return [];
   const body = await resp.text();
-  const matches = [...body.matchAll(/["'](\/files\/[^"']+?\.(?:jpe?g|png|webp|gif))(?:\?[^"']*)?["']/gi)];
-  return [...new Set(matches.map((m) => m[1]))];
+  return photoRefsFrom(body);
 }
 
 // Fetch the notes/comments on one action item (author, time, text).
@@ -662,6 +686,10 @@ async function runFull(page, context) {
           ),
         });
 
+        // Every photo on THIS order with the moment it was uploaded — Check I
+        // reads it to time the drives.
+        const orderPhotos = [];
+
         // Download photos: save each locally (for the report) and fingerprint it.
         // Photo-URL lookups and the downloads themselves run concurrently (capped),
         // which is the biggest per-order speedup for orders with many photos.
@@ -672,12 +700,13 @@ async function runFull(page, context) {
           const tasks = [];
           withPhotos.forEach((ai, k) => (urlLists[k] || []).forEach((u) => tasks.push({ ai, u })));
           const saved = await mapLimit(tasks, 6, async (t) => {
-            const s = await fetchAndStorePhoto(context, t.u, photosDir);
-            return s ? { ai: t.ai, url: t.u, hash: s.hash, localFile: s.localFile } : null;
+            const s = await fetchAndStorePhoto(context, t.u.url, photosDir);
+            return s ? { ai: t.ai, url: t.u.url, uploadedAt: t.u.uploadedAt, hash: s.hash, localFile: s.localFile } : null;
           });
           for (const s of saved) {
             if (!s) continue;
-            allPhotos.push({ soNumber: so.soNumber, aiNumber: s.ai.number || s.ai.id, technician: s.ai.technician || '', url: s.url, hash: s.hash, localFile: s.localFile });
+            allPhotos.push({ soNumber: so.soNumber, aiNumber: s.ai.number || s.ai.id, technician: s.ai.technician || '', url: s.url, uploadedAt: s.uploadedAt, hash: s.hash, localFile: s.localFile });
+            orderPhotos.push({ aiNumber: s.ai.number || s.ai.id, uploadedAt: s.uploadedAt });
             photoCt++;
           }
 
@@ -688,8 +717,8 @@ async function runFull(page, context) {
            * duplicate-photo check could not see one reused across orders. */
           const soUrls = await fetchSoPhotoUrls(context, r.repairOrderId);
           const soSaved = await mapLimit(soUrls, 6, async (u) => {
-            const s = await fetchAndStorePhoto(context, u, photosDir);
-            return s ? { url: u, hash: s.hash, localFile: s.localFile } : null;
+            const s = await fetchAndStorePhoto(context, u.url, photosDir);
+            return s ? { url: u.url, uploadedAt: u.uploadedAt, hash: s.hash, localFile: s.localFile } : null;
           });
           for (const s of soSaved) {
             if (!s) continue;
@@ -697,10 +726,16 @@ async function runFull(page, context) {
               soNumber: so.soNumber,
               aiNumber: SO_LEVEL_PHOTO,       // marks it as belonging to the order
               technician: '',                  // order-level photos have no tech
-              url: s.url, hash: s.hash, localFile: s.localFile,
+              url: s.url, uploadedAt: s.uploadedAt, hash: s.hash, localFile: s.localFile,
             });
+            // Order-level photos anchor a drive too: they are often the arrival
+            // shots taken at the unit.
+            orderPhotos.push({ aiNumber: SO_LEVEL_PHOTO, uploadedAt: s.uploadedAt });
             photoCt++;
           }
+
+          // Check I — how much longer the drive was billed than the photos show.
+          driveTimeFindings(so, orderPhotos).forEach((f) => findings.push(f));
         }
         log(`${so.actionItems.length} items, ${findings.length} issue(s)` + (doPhotos ? `, ${photoCt} photos` : ''));
       }
@@ -1288,6 +1323,84 @@ function sheetPeriodRank(title) {
   return year * 10 + (qm ? +qm[1] : 0);          // year-only sheets sit below that year's Q1
 }
 
+/* ---------------- Check I: drive time billed vs drive time shown ---------------- */
+
+// The items that are pure travel: "Drive to unit", "Drive to unit (Service Call)",
+// "Return from unit", "Parts run". Matching the wording rather than a category
+// because Fullbay has no travel flag — the service text is all there is.
+const DRIVE_ITEM_RE = /drive to unit|return from unit|parts\s*run/i;
+
+// A gap longer than this between the anchor photo and the arrival photo is not a
+// drive — it is somebody adding photos the next day. Those are reported without a
+// variance rather than counted as a 20-hour trip.
+const MAX_PLAUSIBLE_TRIP_HOURS = 12;
+
+const hhmm = (sec) => new Date(sec * 1000).toLocaleString('en-US',
+  { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const asHrs = (min) => (min / 60).toFixed(2);
+
+/*
+ * Compare what was billed for travel against what the photo upload times show.
+ *
+ * Fullbay stores a DURATION (invoicedHours) but the photos give CLOCK times, so a
+ * drive needs two marks: the arrival is this item's earliest photo, and the start
+ * is the latest photo anywhere on the order taken before it — the shot from
+ * wherever they left. Earliest-only on the arrival side is deliberate: photos
+ * added a day later are common, and taking the earliest means a straggler cannot
+ * stretch the trip.
+ *
+ * Every variance is reported, with no tolerance — the point is to see how much
+ * more was billed than the photos show, and judge it per order.
+ */
+function driveTimeFindings(so, orderPhotos) {
+  const out = [];
+  const stamps = (orderPhotos || []).filter((p) => p.uploadedAt);
+  if (!stamps.length) return out;
+
+  for (const ai of so.actionItems) {
+    if (!DRIVE_ITEM_RE.test(ai.originalNote || '')) continue;
+    const key = String(ai.number || ai.id);
+    const mine = stamps.filter((p) => String(p.aiNumber) === key).map((p) => p.uploadedAt).sort((a, b) => a - b);
+    if (!mine.length) continue;
+
+    const arrival = mine[0];
+    const service = String(ai.originalNote || '').replace(/\s*Add\s+Address\s*$/i, '').trim();
+    const invoicedMin = (ai.invoicedHours || 0) * 60;
+    const window = mine.length > 1 ? `${hhmm(mine[0])} to ${hhmm(mine[mine.length - 1])}` : hhmm(mine[0]);
+
+    // The last photo taken anywhere on this order BEFORE they arrived.
+    const before = stamps.map((p) => p.uploadedAt).filter((t) => t < arrival).sort((a, b) => b - a);
+    const anchor = before.length ? before[0] : null;
+    const tripMin = anchor ? (arrival - anchor) / 60 : null;
+
+    if (tripMin === null || tripMin > MAX_PLAUSIBLE_TRIP_HOURS * 60) {
+      // Nothing dependable to measure from. Still surface the numbers rather than
+      // skipping the item in silence — a 1.00 hr drive with one photo is exactly
+      // what somebody wants to look at by hand.
+      out.push({
+        check: 'I', severity: 'warning', technician: ai.technician || '',
+        title: 'Drive time billed, no photo to time it against',
+        detail: `"${service}" billed ${asHrs(invoicedMin)} hr. Photos uploaded ${window}`
+          + (anchor ? ', but the previous photo is more than ' + MAX_PLAUSIBLE_TRIP_HOURS + ' hours earlier' : ' with nothing earlier on the order')
+          + ' — the trip could not be timed.',
+      });
+      continue;
+    }
+
+    const varianceMin = invoicedMin - tripMin;
+    if (varianceMin <= 0) continue; // billed no more than the photos show
+
+    out.push({
+      check: 'I', severity: 'warning', technician: ai.technician || '',
+      title: 'Drive time billed over what the photos show',
+      detail: `"${service}" billed ${asHrs(invoicedMin)} hr, but the photos put the trip at `
+        + `${asHrs(tripMin)} hr (${hhmm(anchor)} to ${hhmm(arrival)}) — `
+        + `${asHrs(varianceMin)} hr more than shown.`,
+    });
+  }
+  return out;
+}
+
 // Merge many tabs into unit -> {status, complete, tab}. The newest tracker holding
 // a unit decides it; within one tracker, a "complete" in ANY tab wins.
 function buildMapFromTabs(tabs) {
@@ -1560,7 +1673,7 @@ function writeCsv(results) {
 
 const CHECK_NAMES = {
   A: 'Photos', B: 'Parts', C: 'Inspections', D: 'Hours', E: 'PO', F: 'Dup photo', G: 'Sheet',
-  H: 'Vorto',
+  H: 'Vorto', I: 'Drive time',
   // No entry for address fixes on purpose — they are housekeeping, not findings,
   // so they never appear as a check against an order.
 };
@@ -3197,7 +3310,7 @@ async function runAddrModalProbe(page, context) {
  * Entry point.
  * -------------------------------------------------------------------------- */
 // Allow requiring this file (e.g. for offline parser tests) without launching a browser.
-if (require.main !== module) { module.exports = { loadSheetCompletionMap, extractTabCompletion, buildMapFromTabs, unitVariants, lookupUnit, writeJson, writeCsv, writeHtml, writeOpenHtml, openRoster, openOrderOwner }; }
+if (require.main !== module) { module.exports = { loadSheetCompletionMap, extractTabCompletion, buildMapFromTabs, sheetPeriodRank, driveTimeFindings, photoRefsFrom, unitVariants, lookupUnit, writeJson, writeCsv, writeHtml, writeOpenHtml, openRoster, openOrderOwner }; }
 
 if (require.main === module) (async () => {
   // Open the Vorto portal so a person can sign in (session saved to .vorto-profile).
