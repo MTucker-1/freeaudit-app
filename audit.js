@@ -1190,7 +1190,12 @@ function currentYearTabFilter(year) {
   // per-minute read quota, and would pull in history tabs whose reverted rows
   // would wrongly read as complete (a "complete" in ANY tab wins).
   const workListRe = /^\s*priority list\s*$/i;
-  return (name) => yearRe.test(name || '') || /full\s*data/i.test(name || '') || workListRe.test(name || '');
+  // "Copy of Full Data ..." is a stale snapshot left beside the real tab. It ranks
+  // equal to its own sheet, so complete-wins applies and its old completions mask
+  // rows the live tab still has at Queued — 4 units on the Q4 SoCal tracker.
+  const staleCopyRe = /^\s*copy of\b/i;
+  return (name) => !staleCopyRe.test(name || '')
+    && (yearRe.test(name || '') || /full\s*data/i.test(name || '') || workListRe.test(name || ''));
 }
 
 // Live sheet URLs/IDs to read. Supports an array (CONFIG.sheets) for multiple
@@ -1257,18 +1262,47 @@ function extractTabCompletion(rows) {
   return out;
 }
 
-// Merge many tabs into unit -> {status, complete, tab}. A "complete" in ANY tab wins.
+/*
+ * How recent a tracker is, read from its TITLE, so the current period's answer
+ * beats a finished one's.
+ *
+ * The SoCal BIT fleet is re-inspected every quarter and gets a fresh sheet each
+ * time ("Q4 SoCal BITs", then "Q1 2027 SoCal BITs"), so the same unit legitimately
+ * appears on several trackers. Merging them with "complete in any tab wins" let a
+ * finished prior period answer for this one: 485 of the Q4 units still sitting at
+ * Queued were being reported complete off the older Freedom SoCal tracker, so the
+ * check passed orders nobody had actually done this quarter.
+ *
+ * Higher rank wins. A title with no period at all (an old open-ended tracker)
+ * ranks below every dated one, which is what retires it automatically. Sheets
+ * covering DIFFERENT units never compete, so ranking cannot hide anything.
+ */
+function sheetPeriodRank(title) {
+  const t = String(title || '');
+  const qm = t.match(/\bQ([1-4])\b/i);
+  const ym = t.match(/\b(20\d{2})\b/);
+  if (!qm && !ym) return -Infinity;              // undated: always loses to a dated sheet
+  // "Q4 SoCal BITs" carries no year — a quarter with no year means the one we're
+  // auditing, which is how the sheets are actually named.
+  const year = ym ? +ym[1] : new Date().getFullYear();
+  return year * 10 + (qm ? +qm[1] : 0);          // year-only sheets sit below that year's Q1
+}
+
+// Merge many tabs into unit -> {status, complete, tab}. The newest tracker holding
+// a unit decides it; within one tracker, a "complete" in ANY tab wins.
 function buildMapFromTabs(tabs) {
   const map = new Map();
   const alt = new Map();   // variant -> Set of canonical unit keys
   const tabsUsed = [];
-  for (const { name, rows } of tabs) {
+  for (const { name, rows, rank = -Infinity, sheetTitle } of tabs) {
     const entries = extractTabCompletion(rows);
     if (!entries.length) continue;
     tabsUsed.push(name);
     for (const e of entries) {
       const prev = map.get(e.unit);
-      if (!prev || (!prev.complete && e.complete)) map.set(e.unit, { status: e.status || '(blank)', complete: e.complete, tab: name });
+      const newer = !prev || rank > prev.rank;
+      const sameRunAndBetter = prev && rank === prev.rank && !prev.complete && e.complete;
+      if (newer || sameRunAndBetter) map.set(e.unit, { status: e.status || '(blank)', complete: e.complete, tab: name, rank, sheetTitle });
       // Index every way this unit could be written, so a differently-formatted
       // number on the service order still finds it.
       for (const v of unitVariants(e.unit)) {
@@ -1327,7 +1361,10 @@ async function loadSheetCompletionMap() {
       settled.forEach((r) => {
         if (!r.ok) { log(`Sheet tracker: skipped ${r.url} — ${r.err}`); return; }
         titles.push(r.sheet.title);
-        for (const t of r.sheet.tabs) tabs.push(t);
+        // Carry the tracker's period onto each of its tabs, so the merge can tell
+        // this quarter's answer from a finished quarter's.
+        const rank = sheetPeriodRank(r.sheet.title);
+        for (const t of r.sheet.tabs) tabs.push({ ...t, rank, sheetTitle: r.sheet.title });
       });
       const { map, alt, tabsUsed } = buildMapFromTabs(tabs);
       return { map, alt, files: titles, year, tabsUsed, live: true };
