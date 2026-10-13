@@ -613,6 +613,7 @@ async function runFull(page, context) {
    * more than the audit. */
   const ocr = doPhotos ? await mapocr.createReader(log) : null;
   if (ocr && ocr.ok) log('  Reading trip times off travel photos.\n');
+  else if (doPhotos) log('  Drive-time check is off on this copy — reinstall FreeAudit to switch it on.\n');
   for (let i = 0; i < limit; i++) {
     const r = rows[i];
     process.stdout.write(`  [${i + 1}/${limit}] ${r.soNumber} ... `);
@@ -759,7 +760,11 @@ async function runFull(page, context) {
         // Check I — hours billed for travel against the trip time on the photo.
         // Outside the photo block on purpose: an item with NO photo still needs
         // reporting, and that is exactly the case doPhotos=false would hide.
-        driveTimeFindings(so, driveReadings).forEach((f) => findings.push(f));
+        // Only when OCR actually ran. An install that picked up this code by
+        // auto-update has no tesseract (a new dependency needs a fresh
+        // installer), and without it every travel item would be reported as
+        // having no photo when it plainly has one.
+        if (ocr && ocr.ok) driveTimeFindings(so, driveReadings).forEach((f) => findings.push(f));
         log(`${so.actionItems.length} items, ${findings.length} issue(s)` + (doPhotos ? `, ${photoCt} photos` : ''));
       }
     } catch (e) {
