@@ -795,8 +795,19 @@ async function runFull(page, context) {
 
   // --- Cross-order pass: flag the SAME photo reused on DIFFERENT service orders ---
   // (Reuse within a single order is intentionally ignored.)
+  /* Travel photos are left out of this entirely. A drive or parts run carries a
+   * maps screenshot of the route, and the same trips recur constantly — the same
+   * facilities, the same parts stores, the same tire shops — so an identical
+   * screenshot across two orders is normal rather than a reused photo. Including
+   * them guaranteed a blocker on honest work. */
+  const serviceOf = (p) => {
+    const r = results.find((rr) => rr.soNumber === p.soNumber);
+    return (r && r.aiServices && r.aiServices[String(p.aiNumber)]) || '';
+  };
   const hashMap = {};
-  allPhotos.forEach((p) => { (hashMap[p.hash] = hashMap[p.hash] || []).push(p); });
+  allPhotos
+    .filter((p) => !DRIVE_ITEM_RE.test(serviceOf(p)))
+    .forEach((p) => { (hashMap[p.hash] = hashMap[p.hash] || []).push(p); });
   const dupInfo = {}; // hash -> [distinct SOs] for photos reused across orders
   Object.entries(hashMap).forEach(([h, group]) => {
     const sos = [...new Set(group.map((p) => p.soNumber))];
