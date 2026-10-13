@@ -77,7 +77,11 @@ function recordRun(results, when = new Date(), kind = 'audit') {
       // across several audits, so totalling `orders` counted it once per run —
       // the timeline needs to count each service order once.
       sos: [...new Set(results.map((r) => String(r.soNumber || '').trim()).filter(Boolean))],
-      flagged: results.filter((r) => (r.findings || []).length).length,
+      // Advisory findings (drive time, severity "info") are reported but never
+      // hold an order back, so they must not count here either — otherwise the
+      // scorecard says an order was flagged while the report shows it ready to
+      // invoice. Per-check totals still include them, which is the point of them.
+      flagged: results.filter((r) => (r.findings || []).some((f) => f.severity !== 'info')).length,
       people,
     });
     if (h.runs.length > MAX_RUNS) h.runs = h.runs.slice(-MAX_RUNS);

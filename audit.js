@@ -889,7 +889,7 @@ async function runFull(page, context) {
   writeJson(results, dupInfo, allPhotos);
   writeHtml(results, dupInfo, openOrders);
   const totalFindings = results.reduce((n, r) => n + r.findings.length, 0);
-  const flaggedOrders = results.filter((r) => r.findings.length).length;
+  const flaggedOrders = results.filter(holdsBack).length;
 
   // --- Impact summary for the FreeAudit dashboard ---
   const byCheck = {};
@@ -912,7 +912,10 @@ async function runFull(page, context) {
   };
   fs.writeFileSync(dataPath('audit-summary.json'), JSON.stringify(summary, null, 2), 'utf8');
 
-  log(`\nDone. ${flaggedOrders} of ${results.length} orders have issues (${totalFindings} findings total).`);
+  const advisoryCount = results.reduce((n, r) => n + r.findings.filter(isAdvisory).length, 0);
+  log(`\nDone. ${flaggedOrders} of ${results.length} orders have issues (${totalFindings - advisoryCount} findings`
+    + (advisoryCount ? `, plus ${advisoryCount} drive-time note${advisoryCount === 1 ? '' : 's'} that do not hold an order back` : '')
+    + ').');
   log('Reports written: audit-report.html  and  audit-results.csv');
 }
 
@@ -1385,7 +1388,7 @@ function driveTimeFindings(so, readings) {
     // hours — a 1.00 hr drive with no evidence is worth a look by eye.
     if (!seen || seen.minutes == null) {
       out.push({
-        check: 'I', severity: 'warning', technician: ai.technician || '',
+        check: 'I', severity: 'info', technician: ai.technician || '',
         title: seen ? 'Drive time billed, no trip time on the photo' : 'Drive time billed with no photo',
         detail: `"${service}" billed ${asHrs(invoicedMin)} hr (${asMin(invoicedMin)}), but `
           + (seen
@@ -1399,7 +1402,7 @@ function driveTimeFindings(so, readings) {
     if (varianceMin <= 0) continue; // billed no more than the trip takes
 
     out.push({
-      check: 'I', severity: 'warning', technician: ai.technician || '',
+      check: 'I', severity: 'info', technician: ai.technician || '',
       title: 'Drive time billed over the trip time on the photo',
       detail: `"${service}" billed ${asHrs(invoicedMin)} hr (${asMin(invoicedMin)}), but the photo `
         + `shows the trip at ${asMin(seen.minutes)}`
@@ -1680,6 +1683,21 @@ function writeCsv(results) {
   fs.writeFileSync(dataPath('audit-results.csv'), '﻿' + lines.join('\r\n'), 'utf8');
 }
 
+/*
+ * Advisory findings are shown but never hold an order back.
+ *
+ * Check I (drive time) is information for the shop, not a defect in the paperwork:
+ * an order whose only remark is a travel variance is still correctly built and
+ * must stay in "Ready to invoice". So advisories are excluded from the flagged /
+ * blocker / warning counts and from the review list, while still printing on the
+ * order card, in the CSV and in the JSON.
+ */
+const ADVISORY_CHECKS = new Set(['I']);
+const isAdvisory = (f) => ADVISORY_CHECKS.has(f.check) || f.severity === 'info';
+/** The findings that actually hold an order back. */
+const blocking = (r) => (r.findings || []).filter((f) => !isAdvisory(f));
+const holdsBack = (r) => blocking(r).length > 0;
+
 const CHECK_NAMES = {
   A: 'Photos', B: 'Parts', C: 'Inspections', D: 'Hours', E: 'PO', F: 'Dup photo', G: 'Sheet',
   H: 'Vorto', I: 'Drive time',
@@ -1699,7 +1717,7 @@ function writeJson(results, dupInfo = {}, allPhotos = []) {
     checkNames: CHECK_NAMES,
     counts: {
       orders: results.length,
-      flaggedOrders: results.filter((r) => r.findings.length).length,
+      flaggedOrders: results.filter(holdsBack).length,
       findings: results.reduce((n, r) => n + r.findings.length, 0),
       blockers: results.reduce((n, r) => n + r.findings.filter((f) => f.severity === 'blocker').length, 0),
       duplicatePhotoGroups: Object.keys(dupInfo).length,
@@ -1776,7 +1794,7 @@ function mtLabel(r) {
 }
 
 function writeHtml(results, dupInfo = {}, openOrders = []) {
-  const flagged = results.filter((r) => r.findings.length);
+  const flagged = results.filter(holdsBack);
   const totalFindings = results.reduce((n, r) => n + r.findings.length, 0);
 
   // Render the photo gallery for one order, grouped by action item.
@@ -1830,12 +1848,14 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
     }).join('')
     : '<span class="none">None</span>');
 
-  const readyList = results.filter((r) => !r.error && !r.findings.length);
-  const reviewList = results.filter((r) => r.error || r.findings.length);
+  // An order carrying only advisories stays READY: a travel variance is worth
+  // seeing, but it is not a reason to hold the invoice.
+  const readyList = results.filter((r) => !r.error && !holdsBack(r));
+  const reviewList = results.filter((r) => r.error || holdsBack(r));
 
   const cards = results.map((r) => {
-    const sev = r.findings.some((f) => f.severity === 'blocker') ? 'blocker'
-      : r.findings.length ? 'warning' : (r.error ? 'error' : 'ok');
+    const sev = blocking(r).some((f) => f.severity === 'blocker') ? 'blocker'
+      : holdsBack(r) ? 'warning' : (r.error ? 'error' : 'ok');
     const findingHtml = r.error
       ? `<div class="f err">Could not audit: ${esc(r.error)}</div>`
       : (r.findings.length
@@ -1906,8 +1926,11 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
   }).join('')}
   </div>`;
 
-  const blockers = results.reduce((n, r) => n + r.findings.filter((f) => f.severity === 'blocker').length, 0);
-  const warnings = totalFindings - blockers;
+  const blockers = results.reduce((n, r) => n + blocking(r).filter((f) => f.severity === 'blocker').length, 0);
+  // Advisories (drive time) are counted on their own so they are visible without
+  // inflating "Warnings", which is what decides whether an order looks held up.
+  const advisories = results.reduce((n, r) => n + r.findings.filter(isAdvisory).length, 0);
+  const warnings = totalFindings - blockers - advisories;
   const photoCount = results.reduce((n, r) => n + ((r.photos && r.photos.length) || 0), 0);
   const clean = results.length - flagged.length;
   const tile = (v, l, cls) => `<div class="tile ${cls || ''}"><div class="tv">${v}</div><div class="tl">${l}</div></div>`;
@@ -1925,11 +1948,14 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
     padding:30px 34px 70px;border-radius:0 0 26px 26px;box-shadow:0 14px 40px rgba(11,35,65,.25)}
   .banner h1{font-size:26px;font-weight:800;margin:0;letter-spacing:-.02em}
   .banner .sub{color:#bcd0ee;font-size:13.5px;margin-top:4px}
-  .tiles{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin:-46px auto 26px;max-width:1000px;padding:0 20px}
+  /* auto-fit, not a fixed 5: the Drive time tile only appears when there are
+     drive-time notes, and a hard column count left it stranded on its own row. */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:-46px auto 26px;max-width:1100px;padding:0 20px}
   .tile{background:#fff;border-radius:16px;padding:16px 14px;text-align:center;box-shadow:0 10px 26px rgba(11,35,65,.10);border:1px solid var(--line)}
   .tile .tv{font-size:28px;font-weight:800;color:var(--navy);line-height:1}
   .tile .tl{font-size:11.5px;font-weight:600;color:var(--dim);margin-top:6px;letter-spacing:.02em}
   .tile.red .tv{color:var(--red)}.tile.amber .tv{color:#b45309}.tile.green .tv{color:#15803d}
+  .tile.blue .tv{color:#1d4ed8}
   .so{background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin-bottom:14px;
     box-shadow:0 6px 18px rgba(11,35,65,.06);border-left:6px solid #cbd5e1;transition:transform .15s,box-shadow .15s}
   .so:hover{transform:translateY(-2px);box-shadow:0 16px 36px rgba(11,35,65,.12)}
@@ -1955,6 +1981,9 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
   .f .ttl{font-weight:600}
   .f .tech{font-size:11px;color:var(--dim);background:#f1f5f9;border-radius:20px;padding:3px 10px}
   .f.blocker .tag{background:#fee2e2;color:#b91c1c}.f.warning .tag{background:#fef3c7;color:#b45309}
+  /* Advisory (drive time): shown in blue, deliberately NOT red or amber — the
+     order is still fine to invoice, this is information about the travel billed. */
+  .f.info .tag{background:#dbeafe;color:#1d4ed8}
   .f.ok{color:#15803d;font-weight:600}.f.err{color:#b91c1c;font-weight:600}
   .det{color:var(--dim);margin-top:2px;flex-basis:100%;font-weight:400}
   .gallery,.notes{margin-top:12px;border-top:1px solid #f0f3f8;padding-top:10px}
@@ -2044,6 +2073,7 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
     ${tile(blockers, 'Blockers', 'red')}
     ${tile(warnings, 'Warnings', 'amber')}
     ${tile(clean, 'Clean', 'green')}
+    ${advisories ? tile(advisories, 'Drive time', 'blue') : ''}
   </div>
   <div class="wrap lists">
     <div class="list ready"><h2>Ready to invoice <span>${readyList.length}</span></h2>
