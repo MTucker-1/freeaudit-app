@@ -1339,15 +1339,42 @@ function extractTabCompletion(rows) {
  * ranks below every dated one, which is what retires it automatically. Sheets
  * covering DIFFERENT units never compete, so ranking cannot hide anything.
  */
-function sheetPeriodRank(title) {
+function sheetPeriodRank(title, modifiedTime) {
   const t = String(title || '');
   const qm = t.match(/\bQ([1-4])\b/i);
   const ym = t.match(/\b(20\d{2})\b/);
-  if (!qm && !ym) return -Infinity;              // undated: always loses to a dated sheet
-  // "Q4 SoCal BITs" carries no year — a quarter with no year means the one we're
-  // auditing, which is how the sheets are actually named.
-  const year = ym ? +ym[1] : new Date().getFullYear();
-  return year * 10 + (qm ? +qm[1] : 0);          // year-only sheets sit below that year's Q1
+  let period = null;
+  let fromTitle = false;
+  const modified = modifiedTime ? new Date(modifiedTime) : null;
+  const modOk = modified && !isNaN(modified);
+  const modQuarter = modOk ? Math.floor(modified.getMonth() / 3) + 1 : 0;
+  if (qm || ym) {
+    // "Q4 SoCal BITs" carries no year — a quarter with no year means the one
+    // we're auditing, which is how the sheets are actually named.
+    const year = ym ? +ym[1] : new Date().getFullYear();
+    /* A title giving only a year ("Tolleson AZ 2026 PMs") says nothing about
+     * which quarter, and treating it as that year's quarter zero pushed it below
+     * undated trackers — the retired Freedom SoCal sheet was masking 6 units
+     * Tolleson still had Queued. While it is still being edited inside its own
+     * year, take the quarter from the last edit. */
+    const quarter = qm ? +qm[1]
+      : (modOk && modified.getFullYear() === year ? modQuarter : 0);
+    period = year * 10 + quarter;
+    fromTitle = true;
+  } else if (modOk) {
+    /* No period in the name at all — the VORTO and Dallas trackers are like this,
+     * and both are in daily use. Ranking those below every dated sheet would let
+     * a finished quarter answer for them, so fall back to WHEN THE SHEET WAS LAST
+     * EDITED and treat it as belonging to that quarter. This is also what makes a
+     * brand-new tracker win no matter what it is called: it is being edited now,
+     * while the quarter it replaces has gone quiet. */
+    period = modified.getFullYear() * 10 + modQuarter;
+  }
+  if (period === null) return -Infinity;
+  /* Doubling leaves a bit for where the period came from: when a dated title and
+   * a last-edited guess land on the same quarter, the title is the firmer claim,
+   * so an old tracker someone merely opened cannot draw level with it. */
+  return period * 2 + (fromTitle ? 1 : 0);
 }
 
 /* ---------------- Check I: drive time billed vs drive time shown ---------------- */
@@ -1452,9 +1479,14 @@ async function loadSheetCompletionMap() {
   // tracker start counting without anyone editing settings — share it with
   // gsheets.serviceAccountEmail() and it is picked up on the next run.
   let urls = sheetUrls();
+  // Sheet id -> when Drive last saw it edited. Ranking falls back to this for a
+  // tracker whose NAME carries no quarter or year, which is how a newly started
+  // sheet outranks the one it replaces whatever it ends up being called.
+  const modifiedById = {};
   if (CONFIG.autoDiscoverSheets !== false && gsheets.serviceAccount()) {
     try {
       const found = await gsheets.listSpreadsheets();
+      found.forEach((f) => { if (f.modifiedTime) modifiedById[f.id] = f.modifiedTime; });
       const seen = new Set(urls.map((u) => gsheets.idFromUrl(u)));
       let added = 0;
       for (const f of found) {
@@ -1474,7 +1506,7 @@ async function loadSheetCompletionMap() {
       // added, and it happens before the first order opens — so it reads as the
       // app "sitting on the Office page doing nothing".
       const settled = await Promise.all(urls.map(async (url) => {
-        try { return { ok: true, sheet: await gsheets.readSpreadsheet(url, filterFn) }; }
+        try { return { ok: true, url, sheet: await gsheets.readSpreadsheet(url, filterFn) }; }
         catch (e) {
           // One unreadable spreadsheet (permissions, deleted, not a tracker)
           // must not sink the whole completion check.
@@ -1488,7 +1520,7 @@ async function loadSheetCompletionMap() {
         titles.push(r.sheet.title);
         // Carry the tracker's period onto each of its tabs, so the merge can tell
         // this quarter's answer from a finished quarter's.
-        const rank = sheetPeriodRank(r.sheet.title);
+        const rank = sheetPeriodRank(r.sheet.title, modifiedById[gsheets.idFromUrl(r.url)]);
         for (const t of r.sheet.tabs) tabs.push({ ...t, rank, sheetTitle: r.sheet.title });
       });
       const { map, alt, tabsUsed } = buildMapFromTabs(tabs);
