@@ -17,6 +17,7 @@ const crypto = require('crypto');
 const ExcelJS = require('exceljs');
 const gsheets = require('./gsheets');
 const mapocr = require('./mapocr');
+const partsLib = require('./parts');
 const vorto = require('./vorto');
 const { runAudit, runOpenAudit, isServiceCall, classify } = require('./checks');
 const { DATA_DIR, dataPath } = require('./paths');
@@ -611,6 +612,12 @@ async function runFull(page, context) {
   /* One OCR worker for the whole run (Check I reads the trip time off the travel
    * photos). Starting tesseract takes seconds, so a worker per photo would cost
    * more than the audit. */
+  /* A second tab for the parts pages, so the order page this loop is reading is
+   * never navigated away from underneath it. */
+  const partsPage = CONFIG.checkPartQuantities !== false ? await context.newPage().catch(() => null) : null;
+  let partsChecked = 0;   // orders whose parts page was read and lined up
+  let partsRuled = 0;     // services on those orders that HAVE a quantity rule
+  let partsUnread = 0;    // orders whose parts page gave nothing usable
   const ocr = doPhotos ? await mapocr.createReader(log) : null;
   if (ocr && ocr.ok) log('  Reading trip times off travel photos.\n');
   else if (doPhotos) log('  Drive-time check is off on this copy — reinstall FreeAudit to switch it on.\n');
@@ -757,6 +764,34 @@ async function runFull(page, context) {
           }
         }
 
+        /* Check J — do the parts billed match the quantity the service names?
+         *
+         * Read from the parts page, which is the only place parts appear at all.
+         * Skipped unless the service names and the parts blocks line up: the
+         * blocks are matched to services BY ORDER, so a disagreement means parts
+         * could be credited to the wrong service, and a blocker raised off that
+         * would hold up a correct order. Staying quiet is the safe failure. */
+        if (partsPage && CONFIG.checkPartQuantities !== false) {
+          try {
+            const pdata = await partsLib.readOrderParts(partsPage, CONFIG.baseUrl, r.repairOrderId);
+            if (pdata.blocks.length && pdata.blocks.length === pdata.names.length) {
+              partsChecked++;
+              partsRuled += pdata.names.filter((n) => partsLib.expectationFor(n)).length;
+              partsLib.partQuantityProblems(pdata).forEach((p) => {
+                findings.push({
+                  check: 'J', severity: 'blocker',
+                  title: `Parts do not match "${p.service}"`,
+                  detail: `${p.service} calls for ${p.want} ${p.want === 1 ? p.label : p.plural}, `
+                    + `but ${p.got === 0 ? 'none are' : p.got + ' ' + (p.got === 1 ? 'is' : 'are')} on the order.`,
+                });
+              });
+            } else {
+              // Counted, not printed: a per-order line here would bury the run log.
+              partsUnread++;
+            }
+          } catch (e) { partsUnread++; }
+        }
+
         // Check I — hours billed for travel against the trip time on the photo.
         // Outside the photo block on purpose: an item with NO photo still needs
         // reporting, and that is exactly the case doPhotos=false would hide.
@@ -838,6 +873,14 @@ async function runFull(page, context) {
   results.forEach((r) => { delete r._dupKeys; r.photos = allPhotos.filter((p) => p.soNumber === r.soNumber); });
   log(`Photo fingerprints: ${allPhotos.length} photos, ${Object.keys(dupInfo).length} reused across orders.`);
   if (ocr) await ocr.close(); // tesseract holds worker processes open
+  if (partsPage) await partsPage.close().catch(() => {});
+  /* Say what the parts check actually did. "Nothing was wrong" and "it never ran"
+   * look identical in a report, and the difference matters when this is the thing
+   * holding invoices back. */
+  if (CONFIG.checkPartQuantities !== false) {
+    log(`Part quantities: read ${partsChecked} order(s), ${partsRuled} service(s) with a quantity rule`
+      + (partsUnread ? `, ${partsUnread} order(s) could not be read` : '') + '.');
+  }
 
   // --- Check H — is each order's MT (PO) resolved in the Vorto portal? ---
   // LIVE read: drives the real portal each run (no cached copy to go stale).
@@ -1748,7 +1791,7 @@ const holdsBack = (r) => blocking(r).length > 0;
 
 const CHECK_NAMES = {
   A: 'Photos', B: 'Parts', C: 'Inspections', D: 'Hours', E: 'PO', F: 'Dup photo', G: 'Sheet',
-  H: 'Vorto', I: 'Drive time',
+  H: 'Vorto', I: 'Drive time', J: 'Part qty',
   // No entry for address fixes on purpose — they are housekeeping, not findings,
   // so they never appear as a check against an order.
 };

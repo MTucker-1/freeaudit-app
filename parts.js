@@ -42,13 +42,14 @@ function expectationFor(service) {
     // INNER / OUTER name a single position, so one tire unless a count says more.
     const n = stated !== null ? stated : 1;
     return { kind: 'tire', want: [
-      { label: 'tire', n, match: (d) => TIRE_RE.test(d) },
-      { label: 'casing + disposal', n, match: (d) => CASING_RE.test(d) },
+      { label: 'tire', plural: 'tires', n, match: (d) => TIRE_RE.test(d) },
+      // "casing + disposal fees" reads wrong; the line is a fee either way.
+      { label: 'casing + disposal fee', plural: 'casing + disposal fees', n, match: (d) => CASING_RE.test(d) },
     ] };
   }
   if (/AIR\s*BAG/.test(s)) {
     const n = stated !== null ? stated : 1;
-    return { kind: 'airbag', want: [{ label: 'air bag', n, match: (d) => AIRBAG_PART_RE.test(d) }] };
+    return { kind: 'airbag', want: [{ label: 'air bag', plural: 'air bags', n, match: (d) => AIRBAG_PART_RE.test(d) }] };
   }
   return null;
 }
@@ -114,7 +115,7 @@ function partQuantityProblems({ names, blocks }) {
       // The option text is "5F - TIRE REPLACEMENT (2) - TWO TIRE REPLACEMENTS…";
       // keep the service, drop the description that follows it.
       const name = service.split(' - ').slice(0, 2).join(' - ').trim() || service;
-      if (got !== w.n) out.push({ service: name, label: w.label, want: w.n, got });
+      if (got !== w.n) out.push({ service: name, label: w.label, plural: w.plural || w.label + 's', want: w.n, got });
     }
   });
   return out;

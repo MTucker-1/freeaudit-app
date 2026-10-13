@@ -28,6 +28,9 @@ const DEFAULTS = {
   imageLimit: 50,
   checkSheetCompletion: true,
   checkVortoResolved: true,
+  // Check J: do the parts billed match the quantity the service names? Reads one
+  // extra page per order (about 3 seconds), so it can be turned off for a quick run.
+  checkPartQuantities: true,
   // Check A: an inspection action item with no photos of its own is not flagged
   // when the SERVICE ORDER itself carries at least this many attachments — the
   // trailer photos are routinely attached at the top of the order rather than
