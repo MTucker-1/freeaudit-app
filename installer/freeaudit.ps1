@@ -140,10 +140,42 @@ if ($EngineOnly) {
 # ---- Interactive launch ------------------------------------------------------
 # One splash at a time — a second click while starting just leaves the first.
 $uiMutex = New-Object System.Threading.Mutex($false, 'Local\FreeAuditLauncherUI')
-if (-not $uiMutex.WaitOne(0)) { return }
+function Take-UiMutex($ms) {
+  try { return $uiMutex.WaitOne($ms) } catch [System.Threading.AbandonedMutexException] { return $true } catch { return $true }
+}
+if (-not (Take-UiMutex 0)) {
+  # Another launcher holds it. A live one shows its own window, but one stuck
+  # for minutes is dead weight (v1.1.30 left launchers hung behind an invisible
+  # window) and must not block every future click: end it and carry on.
+  $stale = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like '*freeaudit.ps1*' -and $_.CommandLine -notlike '*EngineOnly*' -and
+                   $_.CreationDate -and ((Get-Date) - $_.CreationDate).TotalMinutes -gt 3 }
+  foreach ($s in $stale) { & taskkill /PID $s.ProcessId /T /F 2>$null | Out-Null }
+  if (-not (Take-UiMutex 3000)) {
+    # Genuinely starting already. If the engine is up, a click should still open the app.
+    if (Engine-Up) { Open-AppWindow }
+    return
+  }
+}
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+# The shortcut starts us with SW_HIDE (wscript Run ..., 0), and Windows applies
+# that to the FIRST window a process shows — which was the splash. It sat
+# invisible, its Shown event never fired, the engine never started, and every
+# later click quit because this launcher still held the mutex: "nothing
+# happens". So: a throwaway window takes the SW_HIDE, the timer doesn't wait for
+# Shown, and the splash is forced visible explicitly.
+Add-Type -Namespace FreeAudit -Name Win -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr h, int cmd);
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr h);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr h);
+'@
+try {
+  $sink = New-Object System.Windows.Forms.Form
+  $sink.ShowInTaskbar = $false; $sink.Opacity = 0; $sink.FormBorderStyle = 'None'; $sink.Size = New-Object System.Drawing.Size(1, 1)
+  $sink.Show(); $sink.Hide(); $sink.Dispose()
+} catch { }
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 $form = New-Object System.Windows.Forms.Form
@@ -204,6 +236,7 @@ function Show-Failure($why) {
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 500
 $timer.Add_Tick({
+  if (-not [FreeAudit.Win]::IsWindowVisible($form.Handle)) { [void][FreeAudit.Win]::ShowWindow($form.Handle, 5) }
   $elapsed = ((Get-Date) - $script:stepStarted).TotalSeconds
   switch ($script:step) {
     'update' {
@@ -256,7 +289,12 @@ $openLogs.Add_Click({
   New-Item -ItemType Directory -Path $logDir -Force | Out-Null
   Start-Process explorer.exe $logDir
 })
-$form.Add_Shown({ $form.Activate(); $timer.Start() })
+$form.Add_Load({
+  $timer.Start()
+  [void][FreeAudit.Win]::ShowWindow($form.Handle, 5)   # SW_SHOW, whatever we were started with
+  [void][FreeAudit.Win]::SetForegroundWindow($form.Handle)
+})
+$form.Add_Shown({ $form.Activate() })
 [void]$form.ShowDialog()
 $timer.Stop()
 try { $uiMutex.ReleaseMutex() } catch { }
