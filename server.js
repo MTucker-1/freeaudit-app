@@ -553,6 +553,15 @@ app.use(express.static(path.join(CODE_DIR, 'public'), {
   },
 }));
 
+/* Any route that throws (say users.json can't be written) used to answer with
+ * Express's HTML error page, which the page can't parse, so the button just did
+ * nothing. Answer JSON the UI can show, and log it so it reaches logs\. */
+app.use((err, req, res, next) => {
+  console.error(`[error] ${req.method} ${req.path}: ${err && err.stack || err}`);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'FreeAudit hit a problem: ' + (err && err.message || err) });
+});
+
 // Desktop install: loopback, so nothing is exposed to the network. Hosted (PORT
 // set by the platform): 0.0.0.0, or the platform's router can't reach us.
 const startCfg = readConfig();

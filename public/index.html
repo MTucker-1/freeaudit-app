@@ -482,13 +482,13 @@
       </div>
       <div id="authErr" class="auth-err"></div>
 
-      <form id="loginForm">
+      <form id="loginForm" novalidate>
         <div class="field"><label>Email</label><input type="email" id="li_email" autocomplete="username" required></div>
         <div class="field"><label>Password</label><input type="password" id="li_pw" autocomplete="current-password" required></div>
         <button class="btn btn-red btn-block" type="submit">Sign in</button>
       </form>
 
-      <form id="regForm" class="hidden">
+      <form id="regForm" class="hidden" novalidate>
         <p class="auth-hint">Already use FreeAudit on another PC? Enter the <b>same email and
           password</b> &mdash; it stays your one login. New here? Pick any password.</p>
         <div class="field"><label>Full name</label><input type="text" id="rg_name" autocomplete="name" required></div>
@@ -835,12 +835,41 @@
   $('tabLogin').onclick = () => { $('tabLogin').classList.add('active'); $('tabReg').classList.remove('active'); $('loginForm').classList.remove('hidden'); $('regForm').classList.add('hidden'); clearErr(); };
   $('tabReg').onclick   = () => { $('tabReg').classList.add('active'); $('tabLogin').classList.remove('active'); $('regForm').classList.remove('hidden'); $('loginForm').classList.add('hidden'); clearErr(); };
 
-  $('loginForm').onsubmit = async (e) => {
-    e.preventDefault(); clearErr();
-    const r = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ email:$('li_email').value, password:$('li_pw').value }) });
-    const d = await r.json();
-    if (r.ok) return enterApp();
+  /* POST that never fails silently. A rejected fetch (engine not running), a hung
+   * request, or an HTML error page instead of JSON all used to leave the button
+   * doing nothing at all. Returns { ok, status, d } with d.error always set on
+   * failure. */
+  async function postJSON(url, body){
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 20000);
+    try {
+      const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body), signal: ctl.signal });
+      const text = await r.text();
+      let d = {};
+      try { d = text ? JSON.parse(text) : {}; } catch (e) {
+        d = { error: 'FreeAudit gave an unexpected answer (HTTP ' + r.status + '). Close FreeAudit and open it again; if it keeps happening, send the newest file in C:\FreeAudit\logs to your FreeAudit admin.' };
+      }
+      if (!r.ok && !d.error) d.error = 'FreeAudit returned an error (HTTP ' + r.status + ').';
+      return { ok: r.ok, status: r.status, d };
+    } catch (e) {
+      return { ok: false, status: 0, d: { error: e.name === 'AbortError'
+        ? 'FreeAudit did not answer within 20 seconds. Close FreeAudit and open it again.'
+        : 'Could not reach the FreeAudit engine (' + (e.message || e) + '). Close FreeAudit and open it again from the desktop icon.' } };
+    } finally { clearTimeout(t); }
+  }
+  /* Button shows it is working, and cannot be double-submitted. */
+  async function busy(form, label, fn){
+    const b = form.querySelector('button[type=submit]'); const was = b.textContent;
+    b.disabled = true; b.textContent = label;
+    try { return await fn(); } finally { b.disabled = false; b.textContent = was; }
+  }
+  const looksLikeEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+
+  $('loginForm').onsubmit = (e) => { e.preventDefault(); clearErr(); return busy($('loginForm'), 'Signing in...', async () => {
+    const email = $('li_email').value.trim();
+    if (!email || !$('li_pw').value) return showErr('Enter your email and password.');
+    const { ok, d } = await postJSON('/api/login', { email, password:$('li_pw').value });
+    if (ok) return enterApp();
     // A PC that has never seen this account is not a wrong password. Carry the email
     // straight over to setup so the same login can be claimed here in one step.
     if (d.needsSetup) {
@@ -850,16 +879,20 @@
       return showNote('First time on this PC. Enter the same email and password you always use, plus the signup code, and it stays your same login.');
     }
     showErr(d.error || 'Sign in failed.');
-  };
-  $('regForm').onsubmit = async (e) => {
-    e.preventDefault(); clearErr();
+  }); };
+  $('regForm').onsubmit = (e) => { e.preventDefault(); clearErr(); return busy($('regForm'), 'Setting up...', async () => {
+    const name = $('rg_name').value.trim(), email = $('rg_email').value.trim(), code = $('rg_code').value.trim();
+    if (!name) return showErr('Enter your full name.');
+    if (!looksLikeEmail(email)) return showErr('Enter a valid email address.');
+    if ($('rg_pw').value.length < 6) return showErr('Pick a password of at least 6 characters.');
     // Typed once, it would silently become the password on this PC — so confirm it.
     if ($('rg_pw').value !== $('rg_pw2').value) return showErr('The two passwords do not match.');
-    const r = await fetch('/api/register', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ name:$('rg_name').value, email:$('rg_email').value, password:$('rg_pw').value, code:$('rg_code').value }) });
-    const d = await r.json();
-    if (r.ok) enterApp(); else showErr(d.error || 'Could not set up your account.');
-  };
+    if (!code) return showErr('Enter the signup code (ask your administrator).');
+    const { ok, d } = await postJSON('/api/register', { name, email, password:$('rg_pw').value, code });
+    if (!ok) return showErr(d.error || 'Could not set up your account.');
+    try { await enterApp(); }
+    catch (err) { showErr('Your account was created, but the app did not open (' + (err.message || err) + '). Close FreeAudit and open it again, then sign in.'); }
+  }); };
 
   async function checkAuth(){
     const me = await (await fetch('/api/me')).json();
