@@ -19,6 +19,13 @@ server, no dependency on anyone's computer being on.
    phone/password, then **Save settings**.
 4. Click **Run Audit**.
 
+### If FreeAudit won't open
+The first launch on a new PC can take a minute (it downloads the latest code and
+Windows scans the new files). A small **Starting FreeAudit...** window shows
+while that happens; the app opens by itself once it's ready. If the engine
+can't start, that window says so. Click **Try again**, or **Open log folder** and
+send the newest `engine-*.log` to the admin.
+
 ### Your logins are yours
 Every install starts with blank credential files. What you type in Settings stays
 on your PC — in your install folder — and is never shared with anyone else or
