@@ -1,5 +1,7 @@
 # build-installer.ps1 — assembles a self-contained FreeAudit and compiles the
 # Windows installer (FreeAudit-Setup.exe). Run from the project root.
+# -StageOnly stops after staging the app folder (build-portable.ps1 uses it).
+param([switch]$StageOnly)
 $ErrorActionPreference = 'Stop'
 $proj  = $PSScriptRoot
 $build = Join-Path $proj 'installer-build'
@@ -100,6 +102,8 @@ if (Test-Path $agentSrc) {
 } else {
   Write-Host '        NOTE: no agent-credentials.json - installs will not run the portal agent'
 }
+
+if ($StageOnly) { Write-Host "Staged -> $app"; return }
 
 Write-Host '[8/9] Stage installer script…'
 Copy-Item (Join-Path $proj 'installer\FreeAudit.iss') $build -Force

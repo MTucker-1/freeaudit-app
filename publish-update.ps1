@@ -26,6 +26,9 @@ $enc = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($vpath, ('{ "version": "' + $new + '" }'), $enc)
 Write-Host ("Version " + $cur + " -> " + $new)
 
+# Rebuild the launcher so a change to launcher\FreeAudit.cs ships with the code.
+& (Join-Path $proj 'launcher\compile-launcher.ps1')
+
 & $git add -A
 & $git commit -m ($Message + " (v" + $new + ")")
 & $git push

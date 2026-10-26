@@ -42,6 +42,8 @@ freeaudit-qr.png
 node_modules/
 installer-build/
 *.exe
+# ...except the launcher: installed copies self-update it from the repo
+!launcher/FreeAudit.exe
 
 # --- Keys / certificates (NEVER push) ---
 *.key

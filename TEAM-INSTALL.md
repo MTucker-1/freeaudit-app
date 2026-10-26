@@ -7,24 +7,28 @@ server, no dependency on anyone's computer being on.
 
 ---
 
-## For a teammate (installing it) — 4 steps
-1. **Download** `FreeAudit-Setup.exe` from the link you were given and run it
-   (no admin needed — it installs just for you).
-   - **Windows may show a blue "Windows protected your PC" box** (the installer
-     isn't code-signed). Click **More info → Run anyway.** Expected for an
-     in-house app.
-2. **Open FreeAudit** from the desktop icon. Create your account using the
-   **access code** (`FLSS2026`).
+## For a teammate (getting it) — 4 steps
+1. **Download** `FreeAudit.exe` from the link you were given and **double-click it**.
+   There is no installer: it's one file, no admin needed.
+   - **Windows may show a blue "Windows protected your PC" box** (the app isn't
+     code-signed). Click **More info → Run anyway.** Expected for an in-house app.
+   - The first run sets FreeAudit up on the PC (about a minute) and puts a
+     **FreeAudit** icon on the desktop. Use that icon from then on; the downloaded
+     file can be deleted.
+2. FreeAudit opens. Create your account using the **access code** (`FLSS2026`).
 3. Open **Settings** and enter **your own** Fullbay email/password and Vorto
    phone/password, then **Save settings**.
 4. Click **Run Audit**.
 
+Already have the old installer version? Just run `FreeAudit.exe` once. It uses
+the same folder, so your logins and settings are kept, and it moves your icons
+over to the new launcher.
+
 ### If FreeAudit won't open
-The first launch on a new PC can take a minute (it downloads the latest code and
-Windows scans the new files). A small **Starting FreeAudit...** window shows
-while that happens; the app opens by itself once it's ready. If the engine
-can't start, that window says so. Click **Try again**, or **Open log folder** and
-send the newest `engine-*.log` to the admin.
+A small **Starting FreeAudit...** window shows while it starts; the app opens by
+itself once it's ready. If it can't start, that window says why. Click
+**Try again**, or **Open log folder** and send the newest `engine-*.log` to the
+admin.
 
 ### Your logins are yours
 Every install starts with blank credential files. What you type in Settings stays
@@ -45,14 +49,16 @@ the credential files when they don't already exist.
 
 ## For the admin (you) — one-time setup
 
-### A) Distribute the installer (the "one link, forever")
-- The built file is `installer-build\FreeAudit-Setup.exe`.
+### A) Distribute FreeAudit.exe (the "one link, forever")
+- Build it with `.\build-portable.ps1`; the file is `installer-build\portable\FreeAudit.exe`.
+  (`.\build-installer.ps1` still builds the old `FreeAudit-Setup.exe` if ever needed.)
 - Upload it once to **Google Drive or Dropbox** and share that link. That **one
   link never changes** — every new teammate, now or later, uses the same link +
   the same access code. (It's just a file in storage, so it's always available
   regardless of whose computer is on.)
-- When you ship a new installer (only needed if Node/browser/deps change — rare),
-  replace the file at the same link.
+- Only rebuild when Node, the browser engine or dependencies change (rare) —
+  code AND launcher changes reach everyone through auto-update. Replace the file
+  at the same link.
 
 ### B) Auto-update channel — already set up
 Updates are published from this repo:
