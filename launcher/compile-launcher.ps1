@@ -11,7 +11,7 @@ if (-not (Test-Path $csc)) { $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framewo
 $exe = Join-Path $here 'FreeAudit.exe'
 $tmp = Join-Path $here 'FreeAudit.build.exe'
 & $csc -nologo -target:winexe -optimize "-win32icon:$(Join-Path $proj 'logo.ico')" `
-  -r:System.IO.Compression.dll -r:System.IO.Compression.FileSystem.dll -r:System.Windows.Forms.dll -r:System.Drawing.dll `
+  -r:System.IO.Compression.dll -r:System.IO.Compression.FileSystem.dll -r:System.Windows.Forms.dll -r:System.Drawing.dll -r:System.Management.dll `
   "-out:$tmp" (Join-Path $here 'FreeAudit.cs') | Where-Object { $_ -and $_ -notmatch 'C# 5|supports up to|go.microsoft' }
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $tmp)) { throw 'Launcher failed to compile.' }
 Move-Item $tmp $exe -Force

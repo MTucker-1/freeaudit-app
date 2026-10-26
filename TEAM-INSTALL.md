@@ -12,23 +12,34 @@ server, no dependency on anyone's computer being on.
    There is no installer: it's one file, no admin needed.
    - **Windows may show a blue "Windows protected your PC" box** (the app isn't
      code-signed). Click **More info → Run anyway.** Expected for an in-house app.
-   - The first run sets FreeAudit up on the PC (about a minute) and puts a
-     **FreeAudit** icon on the desktop. Use that icon from then on; the downloaded
+   - The first run sets FreeAudit up in **`C:\FreeAudit`** (about a minute) and
+     puts a **FreeAudit** icon on the desktop. Use that icon from then on; the downloaded
      file can be deleted.
 2. FreeAudit opens. Create your account using the **access code** (`FLSS2026`).
 3. Open **Settings** and enter **your own** Fullbay email/password and Vorto
    phone/password, then **Save settings**.
 4. Click **Run Audit**.
 
-Already have the old installer version? Just run `FreeAudit.exe` once. It uses
-the same folder, so your logins and settings are kept, and it moves your icons
-over to the new launcher.
+Already have the old installer version? Just run `FreeAudit.exe` once. It moves
+your install from `AppData\Local\Programs\FreeAudit` to `C:\FreeAudit`, logins,
+settings and scheduled runs included, and points your icons at the new launcher.
+
+### Where it lives
+- Everything is in **`C:\FreeAudit`**, never in Windows or System32. The folder
+  is locked to your Windows account (plus administrators), because it holds your
+  Fullbay and Vorto logins. A second Windows user on the same PC gets
+  `C:\FreeAudit-<their name>`.
+- Nothing is downloaded at run time: Node, the browser engine, every npm
+  package and the OCR data ship inside `FreeAudit.exe`. After unpacking it checks
+  they are all there, re-unpacks once if antivirus removed something, and
+  otherwise says which file is missing. Edge (for the app window) and .NET
+  Framework 4 (for the launcher) come with every Windows 10/11 PC.
 
 ### If FreeAudit won't open
 A small **Starting FreeAudit...** window shows while it starts; the app opens by
 itself once it's ready. If it can't start, that window says why. Click
-**Try again**, or **Open log folder** and send the newest `engine-*.log` to the
-admin.
+**Try again**, or **Open log folder** (`C:\FreeAudit\logs`) and send the newest
+`engine-*.log` to the admin.
 
 ### Your logins are yours
 Every install starts with blank credential files. What you type in Settings stays

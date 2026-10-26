@@ -26,7 +26,10 @@ using System.Drawing;
 using System.IO;
 using System.IO.Compression;
 using System.Net;
+using System.Management;
 using System.Reflection;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -43,9 +46,13 @@ static class FreeAuditApp
     const string Repo = "MTucker-1/freeaudit-app";
     const string Branch = "main";
 
-    // FREEAUDIT_HOME is for testing only: unpack/run somewhere other than the real install.
-    static readonly string AppDir = Path.GetFullPath(Environment.GetEnvironmentVariable("FREEAUDIT_HOME") ??
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "FreeAudit"));
+    // Where FreeAudit lives on this PC. Set once in Main by ResolveAppDir().
+    static string AppDir;
+    // Where the old installer put it. Moved to C:\FreeAudit on the first run of
+    // FreeAudit.exe, logins and all.
+    // (FREEAUDIT_LEGACY overrides it, for testing the move.)
+    static readonly string LegacyDir = Environment.GetEnvironmentVariable("FREEAUDIT_LEGACY") ?? Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "FreeAudit");
     static string SelfPath { get { return Application.ExecutablePath; } }
     static string LauncherPath { get { return Path.Combine(AppDir, "FreeAudit.exe"); } }
     static string LogDir { get { return Path.Combine(AppDir, "logs"); } }
@@ -69,14 +76,24 @@ static class FreeAuditApp
 
         try
         {
+            long payloadOffset, payloadLength;
+            bool hasPayload = FindPayload(SelfPath, out payloadOffset, out payloadLength);
+            AppDir = ResolveAppDir(hasPayload);
+            if (InWindowsDir(AppDir))
+            {
+                // Never install into or run from C:\Windows (System32 included).
+                if (!engineOnly && !stop)
+                    MessageBox.Show("FreeAudit can't run from " + AppDir + ".\r\n\r\nDouble-click the FreeAudit.exe you downloaded; it sets itself up in C:\\FreeAudit.",
+                        "FreeAudit", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return 1;
+            }
+
             if (stop) { StopEngine(); StopAgent(); return 0; }
             if (engineOnly) { RunEngineOnly(); return 0; }
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            long payloadOffset, payloadLength;
-            bool hasPayload = FindPayload(SelfPath, out payloadOffset, out payloadLength);
             bool isInstalledCopy = string.Equals(Path.GetFullPath(SelfPath), Path.GetFullPath(LauncherPath), StringComparison.OrdinalIgnoreCase);
 
             using (var mutex = new Mutex(false, @"Local\FreeAuditApp"))
@@ -122,7 +139,26 @@ static class FreeAuditApp
             CleanupOldLaunchers();
             if (hasPayload)
             {
-                Unpack(ui, off, len);
+                bool moved = MigrateLegacy(ui);
+                Unpack(ui, off, len, false);
+                // Prove the unpacked app has everything it needs locally. A miss
+                // (usually antivirus quarantining a file) gets one full re-unpack.
+                string missing = SelfCheck();
+                if (missing != null)
+                {
+                    ui.Status("Repairing FreeAudit (some files were missing)...", 0);
+                    Unpack(ui, off, len, true);
+                    missing = SelfCheck();
+                    if (missing != null)
+                    {
+                        ui.Fail("FreeAudit is missing files it needs on this PC:\r\n\r\n" + missing +
+                            "\r\n\r\nAntivirus may have removed them. Allow the folder " + AppDir +
+                            " in your antivirus, then double-click FreeAudit.exe again.", false);
+                        return;
+                    }
+                }
+                // Never from a test copy: the sync replaces this user's real scheduled tasks.
+                if (moved && Environment.GetEnvironmentVariable("FREEAUDIT_HOME") == null) ResyncSchedule();
                 CreateShortcuts();
                 if (!isInstalledCopy && File.Exists(LauncherPath))
                 {
@@ -205,7 +241,7 @@ static class FreeAuditApp
         catch { return false; }
     }
 
-    static void Unpack(Splash ui, long off, long len)
+    static void Unpack(Splash ui, long off, long len, bool force)
     {
         string marker = Path.Combine(AppDir, "payload.id");
         using (var fs = new FileStream(SelfPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
@@ -215,13 +251,13 @@ static class FreeAuditApp
             var ve = zip.GetEntry("version.json");
             if (ve != null) using (var r = new StreamReader(ve.Open())) payloadVer = ReadVersion(r.ReadToEnd()) ?? "0";
             string id = payloadVer + ":" + len;
-            if (File.Exists(marker) && File.ReadAllText(marker).Trim() == id && File.Exists(Path.Combine(AppDir, "node.exe")))
+            if (!force && File.Exists(marker) && File.ReadAllText(marker).Trim() == id && File.Exists(Path.Combine(AppDir, "node.exe")))
                 return;   // this exact download is already unpacked
 
-            ui.Status("Setting up FreeAudit on this PC (one time, about a minute)...", 0);
-            Directory.CreateDirectory(AppDir);
+            if (!force) ui.Status("Setting up FreeAudit in " + AppDir + " (one time, about a minute)...", 0);
+            if (!Directory.Exists(AppDir)) { Directory.CreateDirectory(AppDir); SecureDir(AppDir); }
             // node.exe and Chromium are locked while running, so stop ours first.
-            StopEngine(); StopAgent(); KillOurNode();
+            StopEngine(); StopAgent(); KillProcessesUsing(AppDir);
 
             string installedVer = File.Exists(Path.Combine(AppDir, "version.json"))
                 ? ReadVersion(File.ReadAllText(Path.Combine(AppDir, "version.json"))) : null;
@@ -242,7 +278,7 @@ static class FreeAuditApp
                 if (IsCode(name) && !writeCode && File.Exists(target)) continue;
                 if (string.Equals(target, Path.GetFullPath(SelfPath), StringComparison.OrdinalIgnoreCase)) continue;
                 // Unchanged since the last unpack: skip (makes re-running a download fast).
-                if (File.Exists(target))
+                if (!force && File.Exists(target))
                 {
                     var fi = new FileInfo(target);
                     if (fi.Length == e.Length && Math.Abs((fi.LastWriteTime - e.LastWriteTime.LocalDateTime).TotalSeconds) < 2.5) continue;
@@ -494,18 +530,200 @@ static class FreeAuditApp
         catch { }
     }
 
-    // Before unpacking: any node.exe running from our folder holds files open.
-    static void KillOurNode()
+    // Anything running from, or launched about, a FreeAudit folder: node,
+    // the browser engine, cmd wrappers, and old PowerShell/wscript launchers
+    // (v1.1.30 could leave one hung). They hold files open, so unpacking or
+    // moving the folder fails while they run.
+    static void KillProcessesUsing(string dir)
     {
-        foreach (var p in Process.GetProcessesByName("node"))
+        string d = dir.TrimEnd('\\');
+        int self = Process.GetCurrentProcess().Id;
+        try
         {
-            try
+            using (var q = new ManagementObjectSearcher("SELECT ProcessId, ExecutablePath, CommandLine FROM Win32_Process"))
             {
-                if (p.MainModule.FileName.StartsWith(AppDir, StringComparison.OrdinalIgnoreCase)) Taskkill(p.Id.ToString());
+                foreach (ManagementObject p in q.Get())
+                {
+                    try
+                    {
+                        int pid = Convert.ToInt32(p["ProcessId"]);
+                        if (pid == self) continue;
+                        string exe = (p["ExecutablePath"] as string) ?? "";
+                        string cmd = (p["CommandLine"] as string) ?? "";
+                        if (exe.StartsWith(d + "\\", StringComparison.OrdinalIgnoreCase) ||
+                            cmd.IndexOf(d + "\\", StringComparison.OrdinalIgnoreCase) >= 0)
+                            Taskkill(pid.ToString());
+                    }
+                    catch { }
+                }
             }
-            catch { }
         }
-        Thread.Sleep(500);
+        catch { }
+        Thread.Sleep(700);
+    }
+
+    // ------------------------------------------------------------- location
+    static string ResolveAppDir(bool hasPayload)
+    {
+        // FREEAUDIT_HOME is for testing only: unpack/run somewhere other than the real install.
+        string forced = Environment.GetEnvironmentVariable("FREEAUDIT_HOME");
+        if (!string.IsNullOrEmpty(forced)) return Path.GetFullPath(forced);
+        // An unpacked copy runs where it lives, wherever an older version put it.
+        // Hard-coding one path here would strand every install the moment this
+        // launcher self-updated into it.
+        string selfDir = Path.GetDirectoryName(Path.GetFullPath(SelfPath));
+        if (!hasPayload && File.Exists(Path.Combine(selfDir, "server.js")) && !InWindowsDir(selfDir)) return selfDir;
+        // The download: install into a folder of its own on the C: drive.
+        string root = Directory.Exists(@"C:\") ? @"C:\" : Path.GetPathRoot(Environment.SystemDirectory);
+        string main = Path.Combine(root, "FreeAudit");
+        if (!Directory.Exists(main) || CanWrite(main)) return main;
+        // C:\FreeAudit belongs to another Windows user on this PC (it is locked
+        // to its owner), so this user gets their own.
+        return Path.Combine(root, "FreeAudit-" + Regex.Replace(Environment.UserName, @"[^A-Za-z0-9._-]", "_"));
+    }
+
+    static bool InWindowsDir(string p)
+    {
+        string win = Environment.GetFolderPath(Environment.SpecialFolder.Windows).TrimEnd('\\');
+        string full = Path.GetFullPath(p).TrimEnd('\\');
+        return full.Equals(win, StringComparison.OrdinalIgnoreCase) || full.StartsWith(win + "\\", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool CanWrite(string dir)
+    {
+        try
+        {
+            string f = Path.Combine(dir, ".write-test-" + Guid.NewGuid().ToString("N"));
+            File.WriteAllText(f, "");
+            File.Delete(f);
+            return true;
+        }
+        catch { return false; }
+    }
+
+    // Folders made in C:\ inherit "every user on this PC may read and change",
+    // and this one holds Fullbay and Vorto passwords and a signed-in browser
+    // profile. Lock it to this user, plus SYSTEM and Administrators.
+    static void SecureDir(string dir)
+    {
+        try
+        {
+            var inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+            var ds = new DirectorySecurity();
+            ds.SetAccessRuleProtection(true, false);
+            ds.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+            ds.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+            ds.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+            Directory.SetAccessControl(dir, ds);
+        }
+        catch { }
+    }
+
+    // Old installer location -> C:\FreeAudit, keeping logins, settings, the
+    // signed-in browser profiles and history. Returns true if anything moved.
+    static bool MigrateLegacy(Splash ui)
+    {
+        if (Environment.GetEnvironmentVariable("FREEAUDIT_HOME") != null && Environment.GetEnvironmentVariable("FREEAUDIT_LEGACY") == null) return false;
+        string old = LegacyDir.TrimEnd('\\');
+        if (old.Equals(AppDir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) return false;
+        if (!File.Exists(Path.Combine(old, "server.js"))) return false;
+        if (File.Exists(Path.Combine(AppDir, "server.js"))) return false;   // already set up on C:\
+
+        ui.Status("Moving FreeAudit to " + AppDir + " (your logins and settings come too)...", null);
+        foreach (var pf in new[] { "server.pid", "agent.pid" })
+            try { Taskkill(File.ReadAllText(Path.Combine(old, pf)).Trim()); } catch { }
+        KillProcessesUsing(old);
+
+        bool moved = false;
+        if (!Directory.Exists(AppDir))
+        {
+            // Same drive, so this is a rename: instant, and nothing is copied.
+            try { Directory.Move(old, AppDir); moved = true; } catch { }
+        }
+        if (moved)
+        {
+            // The old installer's uninstall entry would point at a folder that's gone.
+            try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\FreeAudit_is1", false); } catch { }
+        }
+        else
+        {
+            // Something still holds a file: copy the person's data instead; the
+            // unpack that follows supplies the runtime and code.
+            Directory.CreateDirectory(AppDir);
+            CopyUserData(old, AppDir);
+        }
+        SecureDir(AppDir);
+        return true;
+    }
+
+    static readonly HashSet<string> NotUserData = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+        "node_modules", "browsers", "node.exe", "logs", "server.pid", "agent.pid", "payload.id"
+    };
+
+    static void CopyUserData(string from, string to)
+    {
+        foreach (var f in Directory.GetFiles(from))
+        {
+            if (NotUserData.Contains(Path.GetFileName(f))) continue;
+            try { File.Copy(f, Path.Combine(to, Path.GetFileName(f)), true); } catch { }
+        }
+        foreach (var d in Directory.GetDirectories(from))
+        {
+            if (NotUserData.Contains(Path.GetFileName(d))) continue;
+            CopyTree(d, Path.Combine(to, Path.GetFileName(d)));
+        }
+    }
+
+    static void CopyTree(string from, string to)
+    {
+        try
+        {
+            Directory.CreateDirectory(to);
+            foreach (var f in Directory.GetFiles(from)) try { File.Copy(f, Path.Combine(to, Path.GetFileName(f)), true); } catch { }
+            foreach (var d in Directory.GetDirectories(from)) CopyTree(d, Path.Combine(to, Path.GetFileName(d)));
+        }
+        catch { }
+    }
+
+    // Scheduled audits are registered with the folder's full path; after a move
+    // they must be registered again. Best effort: the schedule is also re-synced
+    // whenever it is saved in Settings.
+    static void ResyncSchedule()
+    {
+        try
+        {
+            string script = Path.Combine(AppDir, "sync-schedule.ps1");
+            if (!File.Exists(script)) return;
+            var psi = new ProcessStartInfo("powershell.exe",
+                "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + script + "\" -DataDir \"" + AppDir + "\"");
+            psi.CreateNoWindow = true; psi.UseShellExecute = false;
+            using (var p = Process.Start(psi)) p.WaitForExit(60000);
+        }
+        catch { }
+    }
+
+    // Runs selfcheck.js with the bundled Node. Returns null when everything is
+    // present, else the problems it found.
+    static string SelfCheck()
+    {
+        try
+        {
+            if (!File.Exists(Path.Combine(AppDir, "selfcheck.js"))) return null;   // older payload
+            string node = Path.Combine(AppDir, "node.exe");
+            if (!File.Exists(node)) return "node.exe";
+            var psi = new ProcessStartInfo(node, "selfcheck.js");
+            psi.WorkingDirectory = AppDir;
+            psi.UseShellExecute = false; psi.CreateNoWindow = true;
+            psi.RedirectStandardOutput = true;
+            psi.EnvironmentVariables["PLAYWRIGHT_BROWSERS_PATH"] = Path.Combine(AppDir, "browsers");
+            using (var p = Process.Start(psi))
+            {
+                string output = p.StandardOutput.ReadToEnd();
+                if (!p.WaitForExit(60000)) { try { p.Kill(); } catch { } return null; }   // slow, not missing
+                return p.ExitCode == 0 ? null : output.Trim();
+            }
+        }
+        catch (Exception e) { return "node.exe would not run (" + e.Message + ")"; }
     }
 
     static void Taskkill(string pid)
