@@ -17,8 +17,14 @@ $out = Join-Path $build 'portable'
 & (Join-Path $proj 'build-installer.ps1') -StageOnly
 
 # 2) Compile the launcher. csc ships with .NET Framework 4 on every Windows PC.
-Write-Host '[portable] Compiling launcher...'
-& (Join-Path $proj 'launcher\compile-launcher.ps1')
+# Only when the source changed: csc output differs byte-for-byte every time, so
+# recompiling on every build would leave a spurious change to the committed exe.
+$lexe = Join-Path $proj 'launcher\FreeAudit.exe'
+$lsrc = Join-Path $proj 'launcher\FreeAudit.cs'
+if (-not (Test-Path $lexe) -or (Get-Item $lsrc).LastWriteTime -gt (Get-Item $lexe).LastWriteTime) {
+  Write-Host '[portable] Compiling launcher...'
+  & (Join-Path $proj 'launcher\compile-launcher.ps1')
+}
 Copy-Item (Join-Path $proj 'launcher\FreeAudit.exe') (Join-Path $app 'FreeAudit.exe') -Force
 
 # 3) Zip the app folder.
