@@ -19,6 +19,7 @@ const { ensureDataDir } = require('./paths');
 const runlock = require('./runlock');
 const gsheets = require('./gsheets');
 const schedule = require('./schedule');
+const techfilter = require('./techfilter');
 
 // Force-kill a process and all its children (so a stuck audit + its Chromium are fully cleared).
 function killTree(pid) { if (pid) { try { exec('taskkill /PID ' + pid + ' /T /F'); } catch (e) { /* ignore */ } } }
@@ -383,6 +384,30 @@ app.get('/open-report-pdf', requireAuth, async (req, res) => {
 // labour location. This is the ONLY action that writes to Fullbay, which is why
 // it is a separate button rather than part of Run Audit.
 app.post('/api/fix-addresses', requireAuth, (req, res) => startChild(['audit.js', 'fixaddresses'], res, (currentUser(req) || {}).name, 'addresses'));
+
+/* ---------------- Tech filter ----------------
+ * Which techs' orders Run Audit, Run Open Audit and Fix Addresses work on, so
+ * people running their own teams don't work through each other's orders.
+ * Saved in this copy's config.json; scheduled and portal runs on this PC follow
+ * it too, because they read the same config. See techfilter.js. */
+app.get('/api/techs', requireAuth, (req, res) => {
+  const tf = readConfig().techFilter || { all: true };
+  const known = techfilter.known();
+  const selected = tf.all === false ? (tf.names || []) : [];
+  // A selected tech stays listed even if they haven't shown up in Fullbay lately.
+  const names = [...new Set([...known.names, ...selected])].sort((a, b) => a.localeCompare(b));
+  res.json({ all: tf.all !== false, selected, names, updatedAt: known.updatedAt });
+});
+app.post('/api/techs', requireAuth, (req, res) => {
+  const r = techfilter.normalise(req.body || {});
+  if (!r.ok) return res.status(400).json({ error: r.error });
+  const c = readConfig();
+  c.techFilter = r.value;
+  writeConfig(c);
+  res.json({ ok: true, ...r.value });
+});
+// Re-read the tech names from Fullbay's lists (opens no orders, changes nothing).
+app.post('/api/techs/refresh', requireAuth, (req, res) => startChild(['audit.js', 'techs'], res, (currentUser(req) || {}).name, 'techs'));
 
 // Opens the Vorto vendor portal in the automation browser (on the host PC) so a person can sign in.
 app.post('/api/connect-vorto', requireAuth, (req, res) => startChild(['audit.js', 'vorto-login'], res, (currentUser(req) || {}).name, 'signin'));

@@ -437,6 +437,18 @@
   .about-cols{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:10px}
   .about-sub{font-size:11.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--navy);margin-bottom:6px}
   @media(max-width:680px){.about-cols{grid-template-columns:1fr;gap:12px}}
+  /* Tech picker */
+  .tf-all{display:flex;align-items:center;gap:10px;padding:12px 14px;border:1.5px solid var(--line);border-radius:12px;
+    font-weight:700;cursor:pointer;margin-bottom:10px}
+  .tf-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px;max-height:45vh;overflow:auto}
+  .tf-list label{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;cursor:pointer;font-size:14px}
+  .tf-list label:hover,.tf-all:hover{background:var(--navy-soft)}
+  .tf-all input,.tf-list input{width:17px;height:17px;accent-color:var(--red);flex:none}
+  .tf-empty{color:var(--dim);font-size:13.5px;padding:10px 2px}
+  .tf-note{font-size:12.5px;color:var(--dim);margin:12px 0 0}
+  .tf-err{color:var(--red-dark);font-size:13px;font-weight:600;margin-right:auto}
+  /* Narrowed to some techs: stand out on the dark panel, so nobody runs a partial audit without noticing. */
+  #techPick.scoped{background:#fff;color:var(--red-dark);border-color:#fff}
   .users-list{display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow:auto;margin-bottom:6px}
   .users-note{font-size:12px;color:var(--faint);line-height:1.6;margin:14px 0 0;padding-top:12px;border-top:1px solid var(--line)}
   .user-row{display:flex;align-items:center;gap:12px;padding:11px 14px;border:1px solid var(--line);border-radius:12px;background:#fbfcfe}
@@ -546,6 +558,12 @@
         <h1>Ready-to-Invoice Audit</h1>
         <p>One click checks every Ready-to-Invoice order in Fullbay for photos, parts, inspections, hours, PO numbers, duplicate photos, and the completion tracker — then builds a full report.</p>
         <div class="controls">
+          <div class="cgroup">
+            <div class="clabel">For</div>
+            <div class="crow">
+              <button id="techPick" class="btn btn-ghost" title="Choose whose orders Run Audit, Run Open Audit and Fix Addresses work on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> <span id="techLabel">All techs</span></button>
+            </div>
+          </div>
           <div class="cgroup">
             <div class="clabel">Run</div>
             <div class="crow">
@@ -803,6 +821,26 @@
       </div>
       <div id="techBody"></div>
       <div class="modal-actions"><button class="btn btn-navy" id="okTech">Close</button></div>
+    </div>
+  </div>
+
+  <!-- ===================== TECH PICKER MODAL ===================== -->
+  <div id="techFilterOverlay" class="overlay">
+    <div class="modal modal-lg">
+      <div style="display:flex;align-items:flex-start">
+        <div><h3>Run for which techs?</h3><p class="lead">Run Audit, Run Open Audit and Fix Addresses only work on orders for the techs you pick,
+          so teams running their own audits don't work through each other's orders. Saved on this PC.</p></div>
+        <button class="x" id="closeTechFilter">&times;</button>
+      </div>
+      <label class="tf-all"><input type="checkbox" id="tfAll"> Select all <span style="font-weight:500;color:var(--dim);font-size:12.5px">(every tech, including new ones)</span></label>
+      <div id="tfList" class="tf-list"></div>
+      <p class="tf-note" id="tfNote"></p>
+      <div class="modal-actions">
+        <span class="tf-err" id="tfErr"></span>
+        <button class="btn" id="tfRefresh" title="Read the tech names from Fullbay's lists. Opens no orders and changes nothing.">Refresh list from Fullbay</button>
+        <button class="btn" id="tfCancel">Cancel</button>
+        <button class="btn btn-navy" id="tfSave">Save</button>
+      </div>
     </div>
   </div>
 
@@ -1418,9 +1456,80 @@
       const r=await fetch('/api/connect-vorto',{method:'POST'});
       if(r.status===409) busyMsg(r); else addLine('Opening Vorto portal sign-in on the shop computer…');
     };
-    // The only action that writes to Fullbay, so it confirms first.
+    /* ---------- Tech picker ---------- */
+    let techState = { all: true, selected: [], names: [] };
+    const techSummary = () => techState.all ? 'All techs'
+      : techState.selected.length === 1 ? techState.selected[0] : techState.selected.length + ' techs';
+    const paintTechButton = () => {
+      $('techLabel').textContent = techSummary();
+      $('techPick').classList.toggle('scoped', !techState.all);
+      $('techPick').title = techState.all ? 'Running for every tech. Click to choose.' : 'Running for: ' + techState.selected.join(', ');
+    };
+    const loadTechs = async () => {
+      try { const r = await fetch('/api/techs'); if (r.ok) techState = await r.json(); } catch (e) { /* keep what we have */ }
+      paintTechButton();
+      return techState;
+    };
+    const tfBoxes = () => [...$('tfList').querySelectorAll('input[type=checkbox]')];
+    const tfSync = () => {
+      const boxes = tfBoxes();
+      $('tfAll').checked = boxes.length > 0 && boxes.every((b) => b.checked) || (boxes.length === 0 && techState.all);
+      $('tfErr').textContent = '';
+    };
+    const renderTechList = () => {
+      const names = techState.names || [];
+      $('tfList').innerHTML = names.length
+        ? names.map((n) => '<label><input type="checkbox" value="' + esc(n) + '"' + (techState.all || techState.selected.includes(n) ? ' checked' : '') + '> ' + esc(n) + '</label>').join('')
+        : '<div class="tf-empty">No tech names yet. Click <b>Refresh list from Fullbay</b>, or run any audit once.</div>';
+      tfBoxes().forEach((b) => { b.onchange = tfSync; });
+      $('tfAll').checked = techState.all;
+      $('tfNote').textContent = techState.updatedAt ? 'Names last read from Fullbay ' + new Date(techState.updatedAt).toLocaleString() + '.' : '';
+      tfSync();
+    };
+    $('tfAll').onchange = () => { tfBoxes().forEach((b) => { b.checked = $('tfAll').checked; }); $('tfErr').textContent = ''; };
+    const closeTechFilter = () => $('techFilterOverlay').classList.remove('open');
+    $('techPick').onclick = async () => { await loadTechs(); renderTechList(); $('techFilterOverlay').classList.add('open'); };
+    $('closeTechFilter').onclick = closeTechFilter; $('tfCancel').onclick = closeTechFilter;
+    $('techFilterOverlay').onclick = (e) => { if (e.target === $('techFilterOverlay')) closeTechFilter(); };
+    $('tfSave').onclick = async () => {
+      const picked = tfBoxes().filter((b) => b.checked).map((b) => b.value);
+      // "Select all" means every tech for good, including ones who join later.
+      const body = $('tfAll').checked ? { all: true } : { all: false, names: picked };
+      if (!body.all && !picked.length) { $('tfErr').textContent = 'Pick at least one tech, or Select all.'; return; }
+      const r = await fetch('/api/techs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null);
+      const d = r ? await r.json().catch(() => ({})) : {};
+      if (!r || !r.ok) { $('tfErr').textContent = d.error || 'Could not save. Try again.'; return; }
+      await loadTechs();
+      closeTechFilter();
+      addLine(techState.all ? 'Runs now cover every tech.' : 'Runs now cover: ' + techState.selected.join(', ') + '.');
+    };
+    $('tfRefresh').onclick = async () => {
+      const r = await fetch('/api/techs/refresh', { method: 'POST' });
+      if (r.status === 409) { const d = await r.json().catch(() => ({})); $('tfErr').textContent = d.message || 'A run is in progress. Try again when it finishes.'; return; }
+      const before = techState.updatedAt;
+      $('tfRefresh').disabled = true; $('tfRefresh').textContent = 'Reading Fullbay...';
+      // The names land in techs.json when the read finishes; poll for it (3 min cap).
+      for (let i = 0; i < 60; i++) {
+        await new Promise((ok) => setTimeout(ok, 3000));
+        const t = await (await fetch('/api/techs')).json().catch(() => null);
+        if (t && t.updatedAt && t.updatedAt !== before) {
+          // Keep the ticks the person has made but not saved yet.
+          const ticked = tfBoxes().filter((b) => b.checked).map((b) => b.value);
+          const wasAll = $('tfAll').checked;
+          techState = { ...t, all: wasAll, selected: ticked };
+          renderTechList();
+          break;
+        }
+      }
+      $('tfRefresh').disabled = false; $('tfRefresh').textContent = 'Refresh list from Fullbay';
+    };
+    loadTechs();
+
+    // The only action that writes to Fullbay, so it confirms first, naming whose orders.
     $('fixAddr').onclick = async () => {
-      if(!confirm('This will CHANGE Bill To and Ship To on every Ready-to-Invoice estimate in Fullbay to match the labour location on each order. Continue?')) return;
+      await loadTechs();
+      const whose = techState.all ? 'every Ready-to-Invoice estimate' : 'the Ready-to-Invoice estimates for ' + techState.selected.join(', ');
+      if(!confirm('This will CHANGE Bill To and Ship To on ' + whose + ' in Fullbay to match the labour location on each order. Continue?')) return;
       const r = await fetch('/api/fix-addresses',{method:'POST'});
       if(r.status===409) busyMsg(r); else addLine('Fixing estimate addresses — watch the progress below.');
     };

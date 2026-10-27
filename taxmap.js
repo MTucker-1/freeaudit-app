@@ -140,4 +140,9 @@ function checkEstimate(current, hint) {
   };
 }
 
-module.exports = { resolve, checkEstimate, displayMatches, isManualOnly };
+/** null when the facility list is loaded, else why not. */
+function unavailable() {
+  try { return data().addresses.length ? null : 'tax-locations.json has no addresses'; } catch (e) { return e.message; }
+}
+
+module.exports = { resolve, checkEstimate, displayMatches, isManualOnly, unavailable };

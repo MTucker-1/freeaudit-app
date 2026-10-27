@@ -18,11 +18,34 @@ const ExcelJS = require('exceljs');
 const gsheets = require('./gsheets');
 const mapocr = require('./mapocr');
 const partsLib = require('./parts');
+const techfilter = require('./techfilter');
 const vorto = require('./vorto');
 const { runAudit, runOpenAudit, isServiceCall, classify } = require('./checks');
 const { DATA_DIR, dataPath } = require('./paths');
 
 const CONFIG = require('./settings').readConfig();
+// Which techs' orders this run is for (null = all). See techfilter.js.
+const TECHS = techfilter.scope(CONFIG);
+
+/*
+ * Narrow a Fullbay list to the selected techs, before any order is opened.
+ * Every name on the list is remembered first, so the picker learns new techs
+ * from any run, filtered or not.
+ *   people(row)  -> the names on that row
+ *   keepUnknown  -> keep rows with nobody named on them (the audit then checks
+ *                   the techs on the order itself); false drops them, which is
+ *                   right for Fix Addresses, where "not sure whose" means hands off.
+ */
+function scopeRows(rows, people, what, keepUnknown) {
+  techfilter.remember(rows.flatMap(people));
+  if (!TECHS) return rows;
+  const kept = rows.filter((r) => {
+    const named = people(r).filter(techfilter.isPerson);
+    return named.length ? techfilter.matches(TECHS, named) : keepUnknown;
+  });
+  log(`Techs: ${techfilter.label(TECHS)} — ${kept.length} of ${rows.length} ${what} order(s) are theirs.`);
+  return kept;
+}
 const PROFILE_DIR = dataPath('.fb-profile');
 const MODE = (process.argv[2] || 'full').toLowerCase();
 
@@ -576,8 +599,9 @@ async function runFull(page, context) {
   phase('sign-in / list', mark);
 
   mark = Date.now();
-  const rows = await readListRows(page);
-  phase(`reading the list (${rows.length} orders)`, mark);
+  const allRows = await readListRows(page);
+  phase(`reading the list (${allRows.length} orders)`, mark);
+  const rows = scopeRows(allRows, (r) => [r.serviceWriter], 'Ready-to-Invoice', true);
 
   let limit = rows.length;
   if (CONFIG.maxOrders && CONFIG.maxOrders > 0) limit = Math.min(limit, CONFIG.maxOrders);
@@ -638,6 +662,12 @@ async function runFull(page, context) {
         const so = await page.evaluate(extractServiceOrderInPage);
         if (!so.soNumber) so.soNumber = r.soNumber;
         so.poNumber = r.poNumber; // PO comes from the list data
+        // No writer on the list row: decide on the techs assigned on the order.
+        if (TECHS && !techfilter.isPerson(r.serviceWriter)
+          && !techfilter.matches(TECHS, so.actionItems.map((a) => a.technician))) {
+          log('not one of the selected techs — skipped');
+          continue;
+        }
 
         // Fetch notes/comments FIRST and attach to each action item, so the checks
         // (especially "No Parts") can read what the note actually says.
@@ -968,6 +998,7 @@ async function runFull(page, context) {
     estMinutesSaved: results.length * minsPerOrder,
     manualMinutesPerOrder: minsPerOrder,
     runSeconds: Math.round((Date.now() - t0) / 1000),
+    techs: TECHS ? TECHS.names : 'all',
   };
   fs.writeFileSync(dataPath('audit-summary.json'), JSON.stringify(summary, null, 2), 'utf8');
 
@@ -2157,7 +2188,7 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
   @media(max-width:680px){.tiles{grid-template-columns:repeat(2,1fr)}}
 </style></head><body>
   <div class="banner"><div class="wrap"><h1>Ready-to-Invoice Audit</h1>
-    <div class="sub">${results.length} orders checked · ${new Date().toLocaleString()}</div></div></div>
+    <div class="sub">${results.length} orders checked${TECHS ? ' · Techs: ' + esc(techfilter.label(TECHS)) : ''} · ${new Date().toLocaleString()}</div></div></div>
   <div class="tiles">
     ${tile(results.length, 'Orders checked')}
     ${tile(flagged.length, 'Orders flagged', 'red')}
@@ -2678,7 +2709,7 @@ async function readOpenSoRows(page) {
 
 /** Audit every open order. Returns [{ ...row, findings }]. */
 async function auditOpenSos(page) {
-  const rows = await readOpenSoRows(page);
+  const rows = scopeRows(await readOpenSoRows(page), (r) => [r.serviceWriter, r.leadTech, r.assignedTech], 'open', false);
   if (!rows.length) { log('Open SOs: none found (or the list did not load).'); return []; }
   const limit = CONFIG.maxOpenOrders > 0 ? Math.min(CONFIG.maxOpenOrders, rows.length) : rows.length;
   log(`\nOpen SOs: ${rows.length} open order(s); auditing ${limit}.`);
@@ -2775,7 +2806,7 @@ function writeOpenHtml(openOrders, opts = {}) {
   @media(max-width:680px){.tiles{grid-template-columns:repeat(2,1fr)}}
 </style></head><body>
   <div class="banner"><div class="wrap"><h1>Open SO Audit${opts.who ? ' — ' + esc(opts.who) : ''}</h1>
-    <div class="sub">${openOrders.length} open order${openOrders.length === 1 ? '' : 's'}${opts.who ? ' assigned to ' + esc(opts.who) : ''} · ${new Date().toLocaleString()}</div></div></div>
+    <div class="sub">${openOrders.length} open order${openOrders.length === 1 ? '' : 's'}${opts.who ? ' assigned to ' + esc(opts.who) : ''}${TECHS && !opts.who ? ' · Techs: ' + esc(techfilter.label(TECHS)) : ''} · ${new Date().toLocaleString()}</div></div></div>
   <div class="tiles">
     <div class="tile"><div class="n">${openOrders.length}</div><div class="l">Open orders</div></div>
     <div class="tile red"><div class="n">${flagged}</div><div class="l">With something outstanding</div></div>
@@ -3299,10 +3330,33 @@ async function fixOrderAddresses(page, repairOrderId, soNumber) {
  *
  * Skips anything ambiguous rather than guessing. Writes address-fixes.json.
  */
-async function runFixAddresses(page, context) {
+/* node audit.js techs — learn every tech name from Fullbay's Ready-to-Invoice and
+ * Open SO lists for the picker. Read-only, and opens no orders. */
+async function runTechsRefresh(page, context) {
   if (!(await ensureListLoaded(page))) { log('Not signed into Fullbay — aborting.'); return; }
   await showAllRows(page);
-  const rows = (await readListRows(page)).filter((r) => r.repairOrderId);
+  const rti = await readListRows(page);
+  const open = await readOpenSoRows(page);
+  const names = techfilter.remember([
+    ...rti.map((r) => r.serviceWriter),
+    ...open.flatMap((r) => [r.serviceWriter, r.leadTech, r.assignedTech]),
+  ]) || [];
+  log(`Techs: ${names.length} known — ${names.join(', ')}`);
+}
+
+async function runFixAddresses(page, context) {
+  // The facility list ships inside FreeAudit.exe, not with code updates (it is
+  // kept out of the public repo), so a copy set up before it existed has none.
+  // Say so once, instead of failing every order the same way.
+  const noList = require('./taxmap').unavailable();
+  if (noList) {
+    log(`This PC has no facility address list (${noList}), so Fix Addresses cannot match labour states to addresses.`);
+    log('Download the latest FreeAudit.exe and run it once; it brings the list with it.');
+    return;
+  }
+  if (!(await ensureListLoaded(page))) { log('Not signed into Fullbay — aborting.'); return; }
+  await showAllRows(page);
+  const rows = scopeRows((await readListRows(page)).filter((r) => r.repairOrderId), (r) => [r.serviceWriter], 'Ready-to-Invoice', false);
   const limit = CONFIG.maxOrders > 0 ? Math.min(CONFIG.maxOrders, rows.length) : rows.length;
   log(`Fixing estimate addresses on ${limit} order(s).\n`);
 
@@ -3331,7 +3385,7 @@ async function runFixAddresses(page, context) {
     problems.forEach((f) => log(`  ${f.so} — ${f.reason || (f.failed || []).join('; ')}`));
   }
   fs.writeFileSync(dataPath('address-fixes.json'),
-    JSON.stringify({ ranAt: new Date().toISOString(), results: out }, null, 2), 'utf8');
+    JSON.stringify({ ranAt: new Date().toISOString(), techs: TECHS ? TECHS.names : 'all', results: out }, null, 2), 'utf8');
   log('Wrote address-fixes.json');
 }
 
@@ -3537,6 +3591,7 @@ if (require.main === module) (async () => {
     else if (MODE === 'addrmodal') await runAddrModalProbe(page, context);
     else if (MODE === 'fixaddr') await runFixAddr(page, context);
     else if (MODE === 'fixaddresses') await runFixAddresses(page, context);
+    else if (MODE === 'techs') await runTechsRefresh(page, context);
     else if (MODE === 'login') {
       // A person is signing in on purpose: never auto-fill (it breaks the SSO
       // screen), and give them 15 minutes to get through Microsoft.

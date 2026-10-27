@@ -51,6 +51,12 @@ Upgrading does not touch any of it: the installer only writes `config.json` and
 the credential files when they don't already exist.
 
 ### What the buttons do
+- **Techs** (left of Run) — whose orders the runs below work on. **Select all**
+  covers every tech, including new ones; or tick just your team. Run Audit, Run
+  Open Audit and Fix Addresses then skip everyone else's orders, so teams can
+  run at the same time without working through each other's orders. Saved on
+  your PC; the button turns white when it is narrowed, and every report says
+  which techs it covers. **Refresh list from Fullbay** picks up new names.
 - **Run Audit** — Ready-to-Invoice orders. Read-only; changes nothing in Fullbay.
 - **Run Open Audit** — orders still being worked: how long open, what is still
   in progress, missing parts or photos. Also read-only.
