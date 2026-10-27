@@ -3190,15 +3190,8 @@ async function readEstimateState(page, repairOrderId) {
  * Point one address field at `facilityName` using the same picker a person uses.
  * Returns { ok, reason?, chose? }.
  */
-async function applyAddress(page, which, facilityName) {
-  const fieldId = which === 'billing' ? 'billingDisplayAddress' : 'shipToDisplayAddress';
-  // What the field says now, so the save can be detected by the value CHANGING
-  // rather than by waiting a fixed three seconds and hoping.
-  const wasValue = await page.evaluate((fid) => {
-    const el = document.getElementById(fid);
-    return el ? el.value : '';
-  }, fieldId).catch(() => '');
-
+/** Open a field's address picker and show all of its rows. Returns 'ok' or why not. */
+async function openAddressPicker(page, fieldId) {
   const opened = await page.evaluate((fid) => {
     const el = document.getElementById(fid);
     if (!el) return 'field missing';
@@ -3208,14 +3201,16 @@ async function applyAddress(page, which, facilityName) {
     pencil.click();
     return 'ok';
   }, fieldId);
-  if (opened !== 'ok') return { ok: false, reason: opened };
+  if (opened !== 'ok') return opened;
   // The picker is fetched over AJAX; wait for its rows rather than guessing.
   await page.waitForFunction(() =>
     document.querySelectorAll('#addresslist tbody tr').length > 0,
   { timeout: 20000 }).catch(() => {});
 
   // Show every address — the picker paginates at 10 and the match may be deeper.
+  // (Reset the settle counter: the picker opens several times per page.)
   await page.evaluate(() => {
+    window.__faRows = -1;
     const sel = document.querySelector('select[name="addresslist_length"]');
     if (sel) {
       sel.value = '100';
@@ -3230,6 +3225,51 @@ async function applyAddress(page, which, facilityName) {
     window.__faRows = n;
     return false;
   }, { timeout: 6000, polling: 250 }).catch(() => {});
+  return 'ok';
+}
+
+/*
+ * A labour state tax-locations.json doesn't list yet (it ships inside
+ * FreeAudit.exe, not with code updates, so a copy can lag behind): read the
+ * facilities out of Fullbay's own address book instead. READ-ONLY — the picker
+ * is closed without choosing anything. taxmap.facilityFromRows decides, and only
+ * when exactly one facility is in that state.
+ */
+async function facilityFromPicker(page, abbr) {
+  const opened = await openAddressPicker(page, 'billingDisplayAddress');
+  if (opened !== 'ok') return { ok: false, reason: `could not open the address picker (${opened})` };
+  const rows = await page.evaluate((zw) => {
+    const ZW = new RegExp(zw, 'g');
+    const clean = (s) => (s || '').replace(ZW, '').replace(/\s+/g, ' ').trim();
+    return Array.from(document.querySelectorAll('#addresslist tbody tr'))
+      .filter((tr) => /^selectAddress\(/.test(tr.getAttribute('onclick') || ''))   // not Add New / Clear
+      .map((tr) => { const td = tr.querySelectorAll('td'); return { title: clean(td[1] && td[1].textContent), address: clean(td[2] && td[2].textContent) }; })
+      .filter((r) => r.title && r.title !== 'Select Address');
+  }, ZW_SRC).catch(() => []);
+  // Close it with its own X, and wait until it is really gone, so the fix that
+  // follows opens a fresh picker rather than clicking into this one.
+  await page.evaluate(() => {
+    const list = document.getElementById('addresslist');
+    const modal = list && list.closest('.modal');
+    const x = modal && modal.querySelector('button.close, [data-dismiss="modal"]');
+    if (x) x.click();
+  }).catch(() => {});
+  await page.waitForFunction(() => { const l = document.getElementById('addresslist'); return !l || !l.offsetParent; }, { timeout: 8000 }).catch(() => {});
+  await sleep(300);
+  return require('./taxmap').facilityFromRows(rows, abbr);
+}
+
+async function applyAddress(page, which, facilityName) {
+  const fieldId = which === 'billing' ? 'billingDisplayAddress' : 'shipToDisplayAddress';
+  // What the field says now, so the save can be detected by the value CHANGING
+  // rather than by waiting a fixed three seconds and hoping.
+  const wasValue = await page.evaluate((fid) => {
+    const el = document.getElementById(fid);
+    return el ? el.value : '';
+  }, fieldId).catch(() => '');
+
+  const opened = await openAddressPicker(page, fieldId);
+  if (opened !== 'ok') return { ok: false, reason: opened };
 
   // Click the row whose TITLE matches the facility exactly. Never "Add New Address".
   const picked = await page.evaluate((args) => {
@@ -3280,7 +3320,16 @@ async function fixOrderAddresses(page, repairOrderId, soNumber) {
     return { so: label, action: 'skipped', reason: `mixed labour locations (${before.laborAbbrs.join(', ')}) — needs a human` };
   }
   const abbr = before.laborAbbrs[0];
-  const verdict = taxmap.checkEstimate(before, abbr);
+  let verdict = taxmap.checkEstimate(before, abbr);
+  // Not in tax-locations.json: Fullbay's address book may still have exactly one
+  // facility in that state (how TX -> Dallas, TX reaches every copy).
+  let fromBook = null;
+  if (!verdict.ok && /^no facility in state/.test(verdict.reason)) {
+    const f = await facilityFromPicker(page, abbr);
+    if (!f.ok) return { so: label, action: 'skipped', reason: `${abbr}: ${f.reason}` };
+    fromBook = f.address;
+    verdict = taxmap.checkAgainst(before, fromBook);
+  }
   if (!verdict.ok) return { so: label, action: 'skipped', reason: `${abbr}: ${verdict.reason}` };
   if (!verdict.problems.length) {
     return { so: label, action: 'ok', reason: `already set to ${verdict.expected.name}` };
@@ -3297,7 +3346,7 @@ async function fixOrderAddresses(page, repairOrderId, soNumber) {
 
   // Verify by re-reading the estimate rather than trusting the click.
   const after = await readEstimateState(page, repairOrderId);
-  const stillWrong = taxmap.checkEstimate(after, abbr);
+  const stillWrong = fromBook ? taxmap.checkAgainst(after, fromBook) : taxmap.checkEstimate(after, abbr);
   const verified = stillWrong.ok && stillWrong.problems.length === 0;
 
   return {
@@ -3330,6 +3379,28 @@ async function fixOrderAddresses(page, repairOrderId, soNumber) {
  *
  * Skips anything ambiguous rather than guessing. Writes address-fixes.json.
  */
+/* node audit.js addrbook <SO> <STATE> — READ-ONLY. Which facility would Fix
+ * Addresses take from Fullbay's address book for that state? Opens the order's
+ * Bill To picker, reads it, closes it; chooses and saves nothing. */
+async function runAddrBookProbe(page, context) {
+  if (!(await ensureListLoaded(page))) { log('Not signed into Fullbay — aborting.'); return; }
+  const want = String(process.argv[3] || '').replace(/^so-?/i, '');
+  const abbr = String(process.argv[4] || '').toUpperCase();
+  if (!want || !/^[A-Z]{2}$/.test(abbr)) { log('usage: node audit.js addrbook <SO-number> <STATE>'); return; }
+  await showAllRows(page);
+  const hit = (await readListRows(page)).find((r) => String(r.soNumber).replace(/^so-?/i, '') === want && r.repairOrderId);
+  if (!hit) { log(`SO ${want} is not in the Ready-to-Invoice list.`); return; }
+  const before = await readEstimateState(page, hit.repairOrderId);
+  log(`${hit.soNumber}: labour ${before.laborAbbrs.join(', ') || '(none)'} · bill to "${before.billToDisplay}" · ship to "${before.shipToDisplay}"`);
+  const f = await facilityFromPicker(page, abbr);
+  if (!f.ok) { log(`${abbr}: ${f.reason}`); return; }
+  const v = require('./taxmap').checkAgainst(before, f.address);
+  log(`${abbr} -> ${f.address.name}: ${f.address.street}, ${f.address.city}, ${f.address.state} ${f.address.zip}`);
+  log(v.problems.length ? 'Fix Addresses would change: ' + v.problems.map((p) => p.field).join(', ') : 'Already correct — Fix Addresses would leave it.');
+  const after = await readEstimateState(page, hit.repairOrderId);
+  log(`unchanged after the lookup: ${after.billToDisplay === before.billToDisplay && after.shipToDisplay === before.shipToDisplay}`);
+}
+
 /* node audit.js techs — learn every tech name from Fullbay's Ready-to-Invoice and
  * Open SO lists for the picker. Read-only, and opens no orders. */
 async function runTechsRefresh(page, context) {
@@ -3592,6 +3663,7 @@ if (require.main === module) (async () => {
     else if (MODE === 'fixaddr') await runFixAddr(page, context);
     else if (MODE === 'fixaddresses') await runFixAddresses(page, context);
     else if (MODE === 'techs') await runTechsRefresh(page, context);
+    else if (MODE === 'addrbook') await runAddrBookProbe(page, context);
     else if (MODE === 'login') {
       // A person is signing in on purpose: never auto-fill (it breaks the SSO
       // screen), and give them 15 minutes to get through Microsoft.

@@ -106,7 +106,12 @@ function displayMatches(display, address) {
 function checkEstimate(current, hint) {
   const r = resolve(hint);
   if (!r.ok) return { ok: false, problems: [], reason: r.reason };
-  const want = r.address;
+  return checkAgainst(current, r.address, !!r.viaDefault);
+}
+
+/** Same comparison against an address found some other way (Fullbay's own
+ * address book, for a facility tax-locations.json doesn't list yet). */
+function checkAgainst(current, want, viaDefault = false) {
   const problems = [];
 
   if (!displayMatches(current.billToDisplay, want)) {
@@ -126,18 +131,43 @@ function checkEstimate(current, hint) {
   // The TAX LOCATION is not changed — only the Bill To and Ship To addresses are.
   // It is still reported as context, so a reviewer can see whether Fullbay's own
   // tax location agrees with the facility the addresses now point at.
-  const taxAgrees = String(current.taxLocationId || '') === String(want.taxLocationId);
+  // An unknown expected id (a facility added before its id was captured) can't
+  // agree or disagree, so it is reported as unknown rather than as a mismatch.
+  const known = !!want.taxLocationId;
   return {
     ok: true,
     expected: want,
-    viaDefault: !!r.viaDefault,
+    viaDefault,
     problems,
     taxLocation: {
       current: current.taxLocationId || '(unset)',
-      expected: `${want.taxLocation} (${want.taxLocationId})`,
-      agrees: taxAgrees,
+      expected: known ? `${want.taxLocation} (${want.taxLocationId})` : `${want.taxLocation || 'unknown'} (id not captured)`,
+      agrees: known ? String(current.taxLocationId || '') === String(want.taxLocationId) : null,
     },
   };
+}
+
+/** "2822 Glenfield Avenue, Dallas, TX 75233, US" -> { street, city, state, zip }. */
+function parseDisplayAddress(text) {
+  const m = String(text || '').replace(/\s+/g, ' ').trim()
+    .match(/^(.*?),\s*([^,]+?),\s*([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)(?:\s*,\s*[A-Za-z]{2,3})?$/);
+  return m ? { street: m[1].trim(), city: m[2].trim(), state: m[3].toUpperCase(), zip: m[4] } : null;
+}
+
+/**
+ * Pick the facility for a state out of Fullbay's address-book rows
+ * ([{ title, address }]). Exactly one title ending ", <ST>" is the answer; none
+ * or several is left for a human, like every other ambiguity here.
+ */
+function facilityFromRows(rows, abbr) {
+  const st = String(abbr || '').toUpperCase();
+  const re = new RegExp(',\\s*' + st + '$', 'i');
+  const hits = (rows || []).filter((r) => re.test(norm(r.title)));
+  if (!hits.length) return { ok: false, reason: `no facility in state "${st}" in tax-locations.json or in Fullbay's address book` };
+  if (hits.length > 1) return { ok: false, reason: `${hits.length} facilities in ${st} in Fullbay's address book (${hits.map((h) => h.title).join(', ')}) — needs a human` };
+  const parsed = parseDisplayAddress(hits[0].address);
+  if (!parsed) return { ok: false, reason: `could not read the address of "${hits[0].title}": ${hits[0].address}` };
+  return { ok: true, address: { name: hits[0].title, ...parsed, taxLocation: '', taxLocationId: '' } };
 }
 
 /** null when the facility list is loaded, else why not. */
@@ -145,4 +175,4 @@ function unavailable() {
   try { return data().addresses.length ? null : 'tax-locations.json has no addresses'; } catch (e) { return e.message; }
 }
 
-module.exports = { resolve, checkEstimate, displayMatches, isManualOnly, unavailable };
+module.exports = { resolve, checkEstimate, checkAgainst, displayMatches, isManualOnly, unavailable, parseDisplayAddress, facilityFromRows };
