@@ -87,6 +87,7 @@ const SHIPPED_SHEETS = [
   { name: 'Q4 SoCal BITs', url: 'https://docs.google.com/spreadsheets/d/17AbS2SZp0EGdobtvAeHFVx_KwP11tvPQBOgP3FUvAF8/edit' },
   { name: 'Dallas PepsiCo — DOT / FHWA Inspection Project', url: 'https://docs.google.com/spreadsheets/d/1NG232IK7lPyFjTxLPiJCC5Vj6jmzEMWMoR0weEpW0EQ/edit' },
   { name: '2026 Louisville PMs', url: 'https://docs.google.com/spreadsheets/d/1yYUt2ISYFOiX3T0OX2sjdObLWjl3aCq4SDrRDHnKgVE/edit' },
+  { name: 'ATL PepsiCo', url: 'https://docs.google.com/spreadsheets/d/1AqaJXmozjZKe6ZNYYsiQ77OiVzu_ibh022ex3es6xjA/edit' },
 ];
 const SHIPPED_URLS = SHIPPED_SHEETS.map((s) => s.url);
 
