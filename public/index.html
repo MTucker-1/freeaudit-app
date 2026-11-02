@@ -1015,6 +1015,21 @@
     function renderSetupBanner(hl){
       const el = $('setupBanner');
       if(!el) return;
+      // An update that could NOT be applied is the most important thing on this
+      // screen: this copy is running old code and cannot repair itself, so it
+      // outranks the setup checklist. Without this the failure is invisible --
+      // update.ps1 keeps the working version and says nothing.
+      if(hl.updateBlocked){
+        el.innerHTML =
+          '<h3>This copy of FreeAudit cannot update itself</h3>'+
+          '<p>Version <b>'+esc(hl.updateBlocked.version||'')+'</b> needs components that automatic updates '+
+          'cannot deliver, so FreeAudit kept the version that works (<b>v'+esc(hl.version||'')+'</b>). '+
+          'You are missing any changes made since then.</p>'+
+          '<p>Ask your FreeAudit admin for the latest <b>FreeAudit-Setup.exe</b> and run it over the top. '+
+          'Your logins and settings are kept &mdash; do <b>not</b> uninstall first.</p>';
+        el.classList.remove('hidden');
+        return;
+      }
       const missing = [];
       if(!hl.fullbayCredsSet) missing.push('<b>Fullbay</b> email &amp; password — needed to open the Ready-to-Invoice list');
       if(!hl.vortoCredsSet)  missing.push('<b>Vorto</b> phone &amp; password — needed for the MT-resolved check');
@@ -1050,6 +1065,7 @@
         : '<span class="dpill ok"><i></i>Idle</span>';
       pills += '<span class="dpill"><i></i>'+online+' online</span>';
       if(hl.trackerUpdated){ const fresh=(Date.now()-new Date(hl.trackerUpdated))<7*864e5; pills += '<span class="dpill '+(fresh?'ok':'warn')+'"><i></i>Trackers '+relTime(hl.trackerUpdated)+'</span>'; }
+      if(hl.version){ pills += '<span class="dpill'+(hl.updateBlocked?' warn':'')+'"><i></i>v'+esc(hl.version)+'</span>'; }
       $('dashPills').innerHTML = pills;
       renderSetupBanner(hl);
       if(sum){

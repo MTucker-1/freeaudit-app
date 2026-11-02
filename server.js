@@ -36,6 +36,28 @@ const GOOGLE_CREDS_PATH = path.join(ROOT, 'google-credentials.json');
 const readFbCreds = () => { try { return fs.existsSync(FBCREDS_PATH) ? JSON.parse(fs.readFileSync(FBCREDS_PATH, 'utf8')) : {}; } catch (e) { return {}; } };
 const fbUser = () => { const c = readFbCreds(); return (c.username && !/PUT-YOUR/i.test(c.username)) ? c.username : ''; };
 const fbCredsSet = () => { const c = readFbCreds(); return !!(fbUser() && c.password && !/PUT-YOUR/i.test(c.password)); };
+/*
+ * Which code version this install is running, and whether an auto-update was
+ * held back.
+ *
+ * Why this is surfaced at all: update.ps1 fails SAFE and SILENT by design — if
+ * GitHub is unreachable, the download is bad, or the new code needs an npm
+ * package this install does not have, it keeps the working version and says
+ * nothing. That is the right behaviour, but it means a copy can sit on months-old
+ * code with nobody aware. Reporting the version turns "is everyone current?"
+ * into something answerable instead of assumed.
+ *
+ * BOM-tolerant: version.json is written without one, but a file hand-edited in
+ * a Windows editor can pick one up, and JSON.parse() throws on a BOM.
+ */
+const readJsonFile = (p) => {
+  try { return JSON.parse(fs.readFileSync(p, 'utf8').replace(/^﻿/, '')); }
+  catch (e) { return null; }
+};
+const appVersion = () => (readJsonFile(path.join(CODE_DIR, 'version.json')) || {}).version || '';
+// Written by update.ps1 when it refuses to apply code that would not run here.
+const updateBlocked = () => readJsonFile(path.join(CODE_DIR, 'update-blocked.json'));
+
 const readGoogleCreds = () => { try { return fs.existsSync(GOOGLE_CREDS_PATH) ? JSON.parse(fs.readFileSync(GOOGLE_CREDS_PATH, 'utf8')) : {}; } catch (e) { return {}; } };
 const googleApiKeySet = () => { const k = (readGoogleCreds().apiKey || '').trim(); return !!(k && !/PUT-YOUR|YOUR-API-KEY/i.test(k)); };
 // Vorto vendor-portal login (its own username/password — different from Fullbay).
@@ -217,6 +239,7 @@ app.get('/api/health', requireAuth, (req, res) => {
   res.json({
     trackerUpdated, trackerCount,
     fullbayCredsSet: fbCredsSet(), vortoCredsSet: vortoCredsSet(),
+    version: appVersion(), updateBlocked: updateBlocked(),
   });
 });
 

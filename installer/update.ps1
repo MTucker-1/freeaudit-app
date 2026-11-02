@@ -25,6 +25,34 @@ try {
   Expand-Archive -Path $zip -DestinationPath $tmp -Force
   $root = Get-ChildItem $tmp -Directory | Select-Object -First 1
   if (-not $root) { return }
+  # A code update must never leave an install unable to start. This script syncs
+  # code but deliberately NOT node_modules, so code that requires a package this
+  # install does not have would crash on every launch with "Cannot find module"
+  # — and the only repair would be a hand-delivered installer, on a PC whose app
+  # no longer opens. So check before applying: if the new version names a
+  # dependency that is not installed here, keep the code that works and record
+  # WHY, which the app shows on the dashboard. Rebuilding and redistributing
+  # FreeAudit-Setup.exe clears it.
+  $blockPath = Join-Path $Dir 'update-blocked.json'
+  $needPkg = Join-Path $root.FullName 'package.json'
+  if (Test-Path $needPkg) {
+    $missing = @()
+    $deps = (Get-Content $needPkg -Raw | ConvertFrom-Json).dependencies
+    if ($deps) {
+      foreach ($name in $deps.PSObject.Properties.Name) {
+        if (-not (Test-Path (Join-Path $Dir ('node_modules\' + $name)))) { $missing += $name }
+      }
+    }
+    if ($missing.Count -gt 0) {
+      $noBom = New-Object System.Text.UTF8Encoding $false
+      [System.IO.File]::WriteAllText($blockPath,
+        ('{ "version": "' + $remoteVer + '", "missing": ["' + ($missing -join '","') + '"] }'), $noBom)
+      Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+      return
+    }
+  }
+  # Deliverable after all — clear any note left by an earlier blocked attempt.
+  if (Test-Path $blockPath) { Remove-Item $blockPath -Force -ErrorAction SilentlyContinue }
   # Replace the code (leave runtime + user data alone). Every root-level .js is
   # synced rather than a hand-kept list, so a newly added module ships on its own
   # — a missed name here would break `require` in every installed copy.

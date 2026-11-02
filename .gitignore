@@ -83,3 +83,7 @@ eng.traineddata
 # Engine output captured by the installed launcher
 logs/
 server.pid
+
+# Written by update.ps1 when an auto-update could not be applied (runtime state,
+# per install) — never part of the published code.
+update-blocked.json

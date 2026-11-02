@@ -24,6 +24,19 @@ End If
 
 If Not fso.FileExists(app & "\run-scheduled.js") Then WScript.Quit 1
 
+' Self-update first. A PC that runs its audits on a schedule, and whose owner
+' rarely clicks the desktop icon, would otherwise sit on old code indefinitely:
+' the interactive launcher and the login launcher both call update.ps1 and this
+' path did not, so scheduled audits silently ran whatever code was installed
+' months ago. Fail-safe like every other caller - update.ps1 keeps the current
+' version on any problem, so a bad download can never stop a scheduled audit.
+upd = app & "\update.ps1"
+If fso.FileExists(upd) Then
+  On Error Resume Next
+  sh.Run "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & upd & """ -Dir """ & app & """", 0, True
+  On Error GoTo 0
+End If
+
 node = app & "\node.exe"
 If Not fso.FileExists(node) Then node = "node"
 
