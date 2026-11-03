@@ -191,9 +191,13 @@ app.get('/api/users', (req, res) => {
   const online = new Set([...sessions.values()]
     .filter((s) => (s.lastSeen || 0) > cutoff)
     .map((s) => (s.email || '').toLowerCase()));
+  /* Newest signup first. This list answers "who has signed up", so ordering by
+   * when they did beats ordering by who happens to be online right now —
+   * sorting the signed-in to the top read as though the rest were being
+   * filtered out. Nobody is filtered: every account in users.json is returned. */
   const users = readUsers()
     .map((u) => ({ name: u.name, email: u.email, created: u.created || '', online: online.has((u.email || '').toLowerCase()) }))
-    .sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name));
+    .sort((a, b) => String(b.created).localeCompare(String(a.created)) || a.name.localeCompare(b.name));
   res.json({ users });
 });
 

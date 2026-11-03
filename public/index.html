@@ -848,7 +848,7 @@
   <div id="usersOverlay" class="overlay">
     <div class="modal">
       <div style="display:flex;align-items:flex-start">
-        <div><h3>Accounts on this computer</h3><p class="lead">Accounts created in <b>this</b> copy of FreeAudit. A green dot means signed in now.</p></div>
+        <div><h3>Accounts on this computer</h3><p class="lead">Every account created in <b>this</b> copy of FreeAudit, signed in or not. The green dot only says who is signed in right now &mdash; nobody is hidden.</p><p class="lead" id="usersCount" style="font-weight:600"></p></div>
         <button class="x" id="closeUsers">&times;</button>
       </div>
       <div id="usersList" class="users-list"></div>
@@ -1654,12 +1654,18 @@
       $('usersList').innerHTML='<div style="color:#8a94a6;font-size:13px">Loading…</div>';
       try{
         const {users}=await (await fetch('/api/users')).json();
-        $('usersList').innerHTML = (users||[]).map(u=>{
+        const list=users||[];
+        // Say the count out loud. With one account on the PC an unlabelled list
+        // of one looks like a filtered list of many.
+        $('usersCount').textContent = list.length===1 ? '1 account signed up on this computer'
+          : list.length+' accounts signed up on this computer';
+        $('usersList').innerHTML = list.map(u=>{
           const initials=(u.name||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
-          const joined=u.created?(' · joined '+new Date(u.created).toLocaleDateString()):'';
+          const joined=u.created?('Signed up '+new Date(u.created).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})):'Signed up (date not recorded)';
           return '<div class="user-row'+(u.online?' online':'')+'">'+
             '<div class="user-av">'+initials+'</div>'+
-            '<div><div class="un">'+esc(u.name)+'</div><div class="ue">'+esc(u.email)+joined+'</div></div>'+
+            '<div><div class="un">'+esc(u.name)+'</div><div class="ue">'+esc(u.email)+'</div>'+
+            '<div class="ue">'+joined+'</div></div>'+
             '<div class="udot"><i></i>'+(u.online?'Online':'Offline')+'</div></div>';
         }).join('') || '<div style="color:#8a94a6">No accounts yet.</div>';
       }catch(e){ $('usersList').innerHTML='<div style="color:#b91c1c">Could not load users.</div>'; }
