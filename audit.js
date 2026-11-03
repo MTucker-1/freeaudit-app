@@ -698,14 +698,24 @@ async function runFull(page, context) {
         if (sheet) {
           const entry = lookupUnit(sheet, unitNum);
           sheetComplete = !!(entry && entry.complete);
-          sheetStatus = entry ? entry.status : 'Not found';
+          /* "Not found" is only an answer when we actually read every tracker.
+           * When one was skipped (an API quota trip drops a whole tracker), the
+           * unit may well be sitting in the one we could not open — so say
+           * UNVERIFIED and do not hold the order back for it. Reporting that as
+           * "not found" produced 24 bogus findings against a correct sheet. */
+          const unverified = !entry && !!(sheet.failed && sheet.failed.length);
+          sheetStatus = entry ? entry.status : (unverified ? 'Unverified' : 'Not found');
           if (!sheetComplete && hasInspection) {
+            const unread = unverified ? sheet.failed.map((f) => f.name).join(', ') : '';
             findings.push({
-              check: 'G', severity: 'warning',
-              title: 'Unit not marked complete in tracker',
+              check: 'G',
+              severity: unverified ? 'info' : 'warning',
+              title: unverified ? 'Tracker could not be read — completion unverified' : 'Unit not marked complete in tracker',
               detail: entry
                 ? `Unit ${unitNum} shows "${entry.status}" in tab "${entry.tab}" — Fullbay has it at Ready to Invoice.`
-                : `Unit ${unitNum} was not found in any ${sheet.year} tab of the tracker.`,
+                : unverified
+                  ? `Unit ${unitNum} is not in the trackers that were read, but ${sheet.failed.length} could not be opened this run (${unread}). This is NOT evidence the unit is missing — re-run to confirm.`
+                  : `Unit ${unitNum} was not found in any ${sheet.year} tab of the tracker.`,
             });
           }
         }
@@ -1573,10 +1583,12 @@ async function loadSheetCompletionMap() {
   // tracker whose NAME carries no quarter or year, which is how a newly started
   // sheet outranks the one it replaces whatever it ends up being called.
   const modifiedById = {};
+  const nameById = {};
   if (CONFIG.autoDiscoverSheets !== false && gsheets.serviceAccount()) {
     try {
       const found = await gsheets.listSpreadsheets();
       found.forEach((f) => { if (f.modifiedTime) modifiedById[f.id] = f.modifiedTime; });
+      found.forEach((f) => { nameById[f.id] = f.name; });
       const seen = new Set(urls.map((u) => gsheets.idFromUrl(u)));
       let added = 0;
       for (const f of found) {
@@ -1595,18 +1607,30 @@ async function loadSheetCompletionMap() {
       // Read the trackers CONCURRENTLY. Sequentially this grew with every sheet
       // added, and it happens before the first order opens — so it reads as the
       // app "sitting on the Office page doing nothing".
-      const settled = await Promise.all(urls.map(async (url) => {
+      /* A FEW at a time, not all at once. Firing every tracker together put
+       * ~46 reads on the wire in a couple of seconds and blew the Sheets API's
+       * "read requests per minute per user" quota (a service account is ONE
+       * user, however many people are auditing). The losing trackers were
+       * dropped, and every unit in them then reported "not found" — 24 bogus
+       * findings on a run where the sheet was perfectly correct. */
+      const settled = await mapLimit(urls, 4, async (url) => {
         try { return { ok: true, url, sheet: await gsheets.readSpreadsheet(url, filterFn) }; }
         catch (e) {
           // One unreadable spreadsheet (permissions, deleted, not a tracker)
           // must not sink the whole completion check.
           return { ok: false, url, err: e.message };
         }
-      }));
+      });
       const tabs = [];
       const titles = [];
+      const failed = [];
       settled.forEach((r) => {
-        if (!r.ok) { log(`Sheet tracker: skipped ${r.url} — ${r.err}`); return; }
+        if (!r.ok) {
+          const name = nameById[gsheets.idFromUrl(r.url)] || r.url;
+          failed.push({ name, err: r.err });
+          log(`Sheet tracker: could not read "${name}" — ${r.err}`);
+          return;
+        }
         titles.push(r.sheet.title);
         // Carry the tracker's period onto each of its tabs, so the merge can tell
         // this quarter's answer from a finished quarter's.
@@ -1614,7 +1638,14 @@ async function loadSheetCompletionMap() {
         for (const t of r.sheet.tabs) tabs.push({ ...t, rank, sheetTitle: r.sheet.title });
       });
       const { map, alt, tabsUsed } = buildMapFromTabs(tabs);
-      return { map, alt, files: titles, year, tabsUsed, live: true };
+      /* An unread tracker is NOT an empty tracker. Check G must know the
+       * difference, or "we could not look" gets reported as "it is not there". */
+      if (failed.length) {
+        log(`Sheet tracker: ${failed.length} of ${urls.length} tracker(s) could not be read `
+          + `(${failed.map((f) => f.name).join(', ')}). Units missing from the rest are reported as `
+          + `UNVERIFIED, not as missing.`);
+      }
+      return { map, alt, files: titles, year, tabsUsed, live: true, failed };
     } catch (e) {
       log(`Sheet tracker: LIVE Google Sheets read failed (${e.message}). Falling back to the local .xlsx export.`);
     }
@@ -1654,7 +1685,7 @@ async function loadSheetCompletionMap() {
   const { map, alt, tabsUsed } = buildMapFromTabs(tabs);
   const usedSet = new Set(tabsUsed);
   const filesUsed = [...new Set(tabs.filter((t) => usedSet.has(t.name)).map((t) => t.file))];
-  return { map, alt, files: filesUsed, year, tabsUsed, live: false };
+  return { map, alt, files: filesUsed, year, tabsUsed, live: false, failed: [] };
 }
 
 /* ----------------------------------------------------------------------------

@@ -88,7 +88,11 @@ async function apiGet(url) {
    * drops an entire tracker and every unit in it looks "not found", which shows
    * up as bogus findings. So retry with backoff rather than failing the sheet.
    */
-  const MAX_TRIES = 5;
+  /* Long enough to outlast the quota window. The limit that trips is "read
+   * requests per MINUTE", so a budget of ~30s (2+4+8+16) could expire while the
+   * window still had seconds to run and the tracker was dropped for nothing.
+   * 2+4+8+16+30+30 = 90s rides out a full window. */
+  const MAX_TRIES = 7;
   let wait = 2000;
   for (let attempt = 1; ; attempt++) {
     const r = await fetch(finalUrl, opts);
@@ -101,7 +105,7 @@ async function apiGet(url) {
     if (!retryable || attempt >= MAX_TRIES) throw new Error(msg);
 
     await new Promise((res) => setTimeout(res, wait));
-    wait = Math.min(wait * 2, 30000); // 2s, 4s, 8s, 16s
+    wait = Math.min(wait * 2, 30000); // 2s, 4s, 8s, 16s, 30s, 30s
   }
 }
 
@@ -131,6 +135,32 @@ async function getTabValues(id, tabTitle) {
   return (j.values || []).map((row) => (row || []).map((c) => (c == null ? '' : String(c))));
 }
 
+/*
+ * Fetch SEVERAL tabs in ONE request (values:batchGet).
+ *
+ * Why this matters: the Sheets API allows 60 read requests per minute per user,
+ * and a service account is one user however many people's audits are running.
+ * One request per tab meant a run across 13 trackers with 33 wanted tabs fired
+ * ~46 reads in a couple of seconds, blew the per-minute quota, and the losing
+ * trackers were dropped — at which point every unit in them reported "not found"
+ * and the audit raised findings against orders that were fine. Batching makes it
+ * one request per TRACKER instead of one per TAB.
+ *
+ * The response's valueRanges come back in the order the ranges were asked for.
+ */
+async function getTabsValues(id, tabTitles) {
+  if (!tabTitles.length) return [];
+  const ranges = tabTitles
+    .map((t) => 'ranges=' + encodeURIComponent("'" + t.replace(/'/g, "''") + "'"))
+    .join('&');
+  const url = 'https://sheets.googleapis.com/v4/spreadsheets/' + id + '/values:batchGet?'
+    + ranges + '&valueRenderOption=FORMATTED_VALUE&majorDimension=ROWS';
+  const j = await apiGet(url);
+  const got = j.valueRanges || [];
+  return tabTitles.map((_, i) => ((got[i] && got[i].values) || [])
+    .map((row) => (row || []).map((c) => (c == null ? '' : String(c)))));
+}
+
 // Read a spreadsheet and return { title, tabs:[{name, rows}] } for tabs passing filterFn.
 async function readSpreadsheet(url, filterFn) {
   if (!isConfigured()) throw new Error('no Google credentials set');
@@ -138,9 +168,8 @@ async function readSpreadsheet(url, filterFn) {
   if (!id) throw new Error('could not read spreadsheet id from "' + url + '"');
   const { title, tabs } = await listTabs(id);
   const wanted = tabs.filter((t) => filterFn(t));
-  const out = [];
-  for (const t of wanted) out.push({ name: t, rows: await getTabValues(id, t) });
-  return { title, tabs: out };
+  const values = await getTabsValues(id, wanted);
+  return { title, tabs: wanted.map((t, i) => ({ name: t, rows: values[i] || [] })) };
 }
 
 /*
@@ -183,5 +212,5 @@ async function listSpreadsheets() {
 
 module.exports = {
   isConfigured, apiKey, serviceAccount, serviceAccountEmail,
-  idFromUrl, readSpreadsheet, listSpreadsheets,
+  idFromUrl, readSpreadsheet, listSpreadsheets, listTabs, getTabValues, getTabsValues,
 };
