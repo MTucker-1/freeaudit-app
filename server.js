@@ -20,6 +20,7 @@ const runlock = require('./runlock');
 const gsheets = require('./gsheets');
 const schedule = require('./schedule');
 const techfilter = require('./techfilter');
+const registry = require('./registry');
 
 // Force-kill a process and all its children (so a stuck audit + its Chromium are fully cleared).
 function killTree(pid) { if (pid) { try { exec('taskkill /PID ' + pid + ' /T /F'); } catch (e) { /* ignore */ } } }
@@ -121,6 +122,21 @@ function startSession(res, user) {
   res.cookie('fa_session', token, { httpOnly: true, sameSite: 'lax', maxAge: SESSION_MS });
 }
 
+
+/*
+ * Tell the shared roster that somebody signed up or signed in.
+ *
+ * Deliberately NOT awaited: the browser's reply must not wait on a Google round
+ * trip, and a sheet that is missing, slow or unshared must never be able to stop
+ * a person getting into the app. registry.record() swallows its own errors and
+ * hands back a reason, which we only log.
+ */
+function noteToRoster(event, user) {
+  registry.record(event, user).then((err) => {
+    if (err) console.error('[roster] ' + event + ' not recorded for ' + user.email + ': ' + err);
+  }).catch(() => { /* registry never throws, but never let this reach the request */ });
+}
+
 app.post('/api/register', (req, res) => {
   const { name, email, password, code } = req.body || {};
   const requiredCode = (readConfig().signupCode || '').trim();
@@ -147,6 +163,7 @@ app.post('/api/register', (req, res) => {
     : (users.push(Object.assign(fields, { created: new Date().toISOString() })), users[users.length - 1]);
   writeUsers(users);
   startSession(res, user);
+  noteToRoster(at >= 0 ? 'signed up (existing email adopted)' : 'signed up', user);
   res.json({ ok: true, adopted: at >= 0 });
 });
 
@@ -167,6 +184,7 @@ app.post('/api/login', (req, res) => {
     return res.status(401).json({ error: 'Wrong email or password.' });
   }
   startSession(res, user);
+  noteToRoster('signed in', user);
   res.json({ ok: true });
 });
 
@@ -199,6 +217,18 @@ app.get('/api/users', (req, res) => {
     .map((u) => ({ name: u.name, email: u.email, created: u.created || '', online: online.has((u.email || '').toLowerCase()) }))
     .sort((a, b) => String(b.created).localeCompare(String(a.created)) || a.name.localeCompare(b.name));
   res.json({ users });
+});
+
+/*
+ * Everyone who has ever signed up or signed in, on ANY PC — read from the shared
+ * "FreeAudit Users" sheet. /api/users above is the accounts on THIS computer;
+ * this is the team. Reports its own failure rather than returning an empty list,
+ * so "nobody has signed up" is never confused with "the sheet is not set up".
+ */
+app.get('/api/roster', async (req, res) => {
+  if (!currentUser(req)) return res.status(401).json({ error: 'Not signed in' });
+  const r = await registry.roster();
+  res.json({ ok: r.ok, rows: r.rows, error: r.error, sheetName: registry.ROSTER_NAME });
 });
 
 // Gate everything below this for signed-in users only.

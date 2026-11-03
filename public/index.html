@@ -848,14 +848,16 @@
   <div id="usersOverlay" class="overlay">
     <div class="modal">
       <div style="display:flex;align-items:flex-start">
-        <div><h3>Accounts on this computer</h3><p class="lead">Every account created in <b>this</b> copy of FreeAudit, signed in or not. The green dot only says who is signed in right now &mdash; nobody is hidden.</p><p class="lead" id="usersCount" style="font-weight:600"></p></div>
+        <div><h3>Who has signed up</h3><p class="lead">Everyone who has ever signed up or signed in to FreeAudit, on any computer.</p></div>
         <button class="x" id="closeUsers">&times;</button>
       </div>
+      <div id="rosterBox"></div>
+      <h3 style="margin:22px 0 2px">On this computer</h3>
+      <p class="lead" id="usersCount" style="font-weight:600"></p>
       <div id="usersList" class="users-list"></div>
-      <p class="users-note">Everyone installs FreeAudit on their own PC, and each copy keeps its own
-        accounts, logins and reports. Teammates who signed up on their own machines will not appear
-        here — there is no shared account list. To see who else is set up, or whether an audit is
-        running elsewhere, use the FLSS dashboard.</p>
+      <p class="users-note">Each copy of FreeAudit keeps its own accounts, logins and reports on the PC
+        it is installed on — that is what the lower list shows. The team list above is gathered from the
+        shared <b>FreeAudit Users</b> sheet, which every install records a sign-up or sign-in to.</p>
       <div class="modal-actions"><button class="btn btn-navy" id="okUsers">Close</button></div>
     </div>
   </div>
@@ -1669,6 +1671,37 @@
             '<div class="udot"><i></i>'+(u.online?'Online':'Offline')+'</div></div>';
         }).join('') || '<div style="color:#8a94a6">No accounts yet.</div>';
       }catch(e){ $('usersList').innerHTML='<div style="color:#b91c1c">Could not load users.</div>'; }
+
+      /* The TEAM list, from the shared sheet. Loaded separately so a slow or
+         missing sheet never delays or blanks the local list below it. */
+      $('rosterBox').innerHTML='<div style="color:#8a94a6;font-size:13px">Loading the team list…</div>';
+      try{
+        const r=await (await fetch('/api/roster')).json();
+        if(!r.ok){
+          // Say what is wrong and how to fix it. An empty list here would read as
+          // "nobody has signed up", which is a different and much worse answer.
+          $('rosterBox').innerHTML='<div class="setup" style="margin:0 0 4px">'+
+            '<h3>The team list is not set up yet</h3>'+
+            '<p>'+esc(r.error||'The shared sheet could not be read.')+'</p>'+
+            '<p>Create a Google Sheet named exactly <b>'+esc(r.sheetName||'FreeAudit Users')+'</b>, name its '+
+            'first tab <b>Sign-ins</b>, and share the sheet as <b>Editor</b> with the FreeAudit service '+
+            'account. Every install then records sign-ups and sign-ins to it automatically.</p></div>';
+        } else if(!r.rows.length){
+          $('rosterBox').innerHTML='<div style="color:#8a94a6;font-size:13px">The sheet is set up, but nobody has signed in since it was created.</div>';
+        } else {
+          $('rosterBox').innerHTML='<div class="users-list">'+r.rows.map(u=>{
+            const initials=(u.name||u.email||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
+            const d=(v)=>v?new Date(v).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}):'—';
+            const pcs=(u.computers||[]).length;
+            return '<div class="user-row">'+
+              '<div class="user-av">'+esc(initials)+'</div>'+
+              '<div><div class="un">'+esc(u.name||u.email)+'</div>'+
+              '<div class="ue">'+esc(u.email)+'</div>'+
+              '<div class="ue">Signed up '+d(u.firstSeen)+' · last seen '+d(u.lastSeen)+
+              (pcs?(' · '+pcs+(pcs===1?' computer':' computers')):'')+'</div></div></div>';
+          }).join('')+'</div>';
+        }
+      }catch(e){ $('rosterBox').innerHTML='<div style="color:#b91c1c">Could not load the team list.</div>'; }
     };
     $('closeUsers').onclick=closeUsers; $('okUsers').onclick=closeUsers;
     $('usersOverlay').onclick=(e)=>{ if(e.target===$('usersOverlay')) closeUsers(); };

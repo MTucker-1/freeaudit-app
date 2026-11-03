@@ -26,6 +26,18 @@ const SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly';
 // Listing every tracker shared with the service account is a Drive operation,
 // not a Sheets one, so it needs its own scope (and the Drive API enabled).
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.metadata.readonly';
+/*
+ * Write scope, used ONLY for the sign-up roster sheet.
+ *
+ * Worth being clear about what this does and does not change. Asking for a
+ * read-only scope was never a security control: the service-account KEY ships
+ * inside every installer, and anyone holding it can mint a token with any scope
+ * they like. What actually decides whether a file can be written is how that
+ * file is SHARED with flssfreeaudit@freeaudit.iam.gserviceaccount.com. Keep the
+ * trackers on Viewer and nothing here can touch them; share the roster sheet as
+ * Editor and only that one is writable.
+ */
+const WRITE_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
 
 /* ---------------- credential loading ---------------- */
 function apiKey() {
@@ -66,6 +78,30 @@ async function getAccessToken(sa, scope = SCOPE) {
   if (!r.ok || !j.access_token) throw new Error('token request failed: ' + (j.error_description || j.error || (r.status + ' ' + r.statusText)));
   tokenCache.set(scope, { token: j.access_token, exp: now + (j.expires_in || 3600) });
   return j.access_token;
+}
+
+/*
+ * Append a row to a tab. Service account only — an API key cannot write.
+ * Used by registry.js for the sign-up roster and nothing else.
+ */
+async function appendRow(id, tabTitle, values) {
+  const sa = serviceAccount();
+  if (!sa) throw new Error('writing needs a service account');
+  const token = await getAccessToken(sa, WRITE_SCOPE);
+  const range = encodeURIComponent("'" + String(tabTitle).replace(/'/g, "''") + "'");
+  const url = 'https://sheets.googleapis.com/v4/spreadsheets/' + id + '/values/' + range
+    + ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS';
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ values: [values] }),
+  });
+  if (!r.ok) {
+    let msg = r.status + ' ' + r.statusText;
+    try { const e = await r.json(); if (e && e.error && e.error.message) msg = e.error.message; } catch (x) { /* ignore */ }
+    throw new Error(msg);
+  }
+  return r.json().catch(() => ({}));
 }
 
 /* ---------------- authorized GET (picks the available auth mode) ---------------- */
@@ -212,5 +248,5 @@ async function listSpreadsheets() {
 
 module.exports = {
   isConfigured, apiKey, serviceAccount, serviceAccountEmail,
-  idFromUrl, readSpreadsheet, listSpreadsheets, listTabs, getTabValues, getTabsValues,
+  idFromUrl, readSpreadsheet, listSpreadsheets, listTabs, getTabValues, getTabsValues, appendRow,
 };
