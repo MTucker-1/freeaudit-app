@@ -1351,7 +1351,12 @@ function currentYearTabFilter(year) {
   // every undated tab: that would read 10+ tabs per sheet and blow the Sheets API
   // per-minute read quota, and would pull in history tabs whose reverted rows
   // would wrongly read as complete (a "complete" in ANY tab wins).
-  const workListRe = /^\s*priority list\s*$/i;
+  // Each project sheet names its work list differently, so they are listed by
+  // exact name. The PTI Albany tracker also carries a "Priority Order" tab and a
+  // "_loc" lookup — deliberately NOT admitted: "Priority Order" is a derived view
+  // holding only the units still open, so it adds a second read per run and no
+  // completion the target list doesn't already have.
+  const workListRe = /^\s*(priority list|albany target units)\s*$/i;
   // "Copy of Full Data ..." is a stale snapshot left beside the real tab. It ranks
   // equal to its own sheet, so complete-wins applies and its old completions mask
   // rows the live tab still has at Queued — 4 units on the Q4 SoCal tracker.
