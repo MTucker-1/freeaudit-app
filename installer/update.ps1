@@ -29,18 +29,32 @@ try {
   # code but deliberately NOT node_modules, so code that requires a package this
   # install does not have would crash on every launch with "Cannot find module"
   # — and the only repair would be a hand-delivered installer, on a PC whose app
-  # no longer opens. So check before applying: if the new version names a
-  # dependency that is not installed here, keep the code that works and record
-  # WHY, which the app shows on the dashboard. Rebuilding and redistributing
-  # FreeAudit-Setup.exe clears it.
+  # no longer opens. So check before applying.
+  #
+  # But only a REQUIRED package can do that, and the distinction is what
+  # package.json already encodes:
+  #
+  #   dependencies          the app cannot start without it -> block the update
+  #   optionalDependencies  the code already handles its absence -> ship anyway
+  #
+  # Treating both as fatal is what stranded every install on 1.1.40: tesseract.js
+  # (OCR for Check I) is required inside a try/catch that turns the check off and
+  # logs it, so its absence was never going to crash anything — yet it blocked
+  # three releases of unrelated work, and the only offered cure was redistributing
+  # an installer. An optional feature staying off is not a reason to withhold
+  # everything else.
+  #
+  # So: block on a missing REQUIRED package, and let a missing OPTIONAL one
+  # through. The feature it powers reports itself off where it runs.
   $blockPath = Join-Path $Dir 'update-blocked.json'
   $needPkg = Join-Path $root.FullName 'package.json'
   if (Test-Path $needPkg) {
     $missing = @()
-    $deps = (Get-Content $needPkg -Raw | ConvertFrom-Json).dependencies
+    $pkg = Get-Content $needPkg -Raw | ConvertFrom-Json
+    $deps = $pkg.dependencies
     if ($deps) {
       foreach ($name in $deps.PSObject.Properties.Name) {
-        if (-not (Test-Path (Join-Path $Dir ('node_modules\' + $name)))) { $missing += $name }
+        if (-not (Test-Path (Join-Path $Dir ('node_modules' + $name)))) { $missing += $name }
       }
     }
     if ($missing.Count -gt 0) {
