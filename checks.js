@@ -36,6 +36,23 @@ function isShopSupply(note) {
 }
 
 /*
+ * Items with nothing to photograph, so no photo check (A, and O6/O7 on open
+ * orders) applies to them.
+ *
+ * A "Service Call (In/Out Hours)" line is not work — it is a placeholder that
+ * records that the order WAS a service call, so there is nothing for a camera to
+ * point at. It was being reported as a missing-photo BLOCKER, which held up
+ * orders that were perfectly correct.
+ *
+ * This deliberately uses the same SERVICE_CALL_RE as Check G, so the leftover
+ * "Drive to unit (Service Call)" wording techs forget to delete is NOT exempt:
+ * that one is real travel and still needs its photo.
+ */
+function isPhotoExempt(note) {
+  return isShopSupply(note) || isServiceCall(note);
+}
+
+/*
  * Repairs that are pure LABOUR. Metal is heated and straightened, a bracket is
  * welded, something is realigned or tightened — nothing is consumed, so a tech
  * marking No Parts is correct rather than forgetful. SO-11784's "Landing gear
@@ -213,9 +230,9 @@ function runAudit(so, opts = {}) {
     // Check A — photos. A repair should have BOTH a before and an after photo,
     // so repair items need at least 2. Any Ready/Invoiced item with zero photos
     // is always flagged.
-    // Fitting hand rubbers/seals leaves nothing meaningful to photograph, so a
-    // shop-supply item is never flagged for missing photos.
-    if (invReady && !isShopSupply(ai.originalNote)) {
+    // Fitting hand rubbers/seals leaves nothing meaningful to photograph, and a
+    // service-call line is only a marker, so neither is flagged for missing photos.
+    if (invReady && !isPhotoExempt(ai.originalNote)) {
       if (ai.photoCount === 0) {
         // An inspection item whose photos live on the SO as a whole is fine.
         if (!(cls.isInspection && inspectionCoveredBySoPhotos(so, soPhotoMin))) {
@@ -274,7 +291,7 @@ function runAudit(so, opts = {}) {
 }
 
 module.exports = {
-  classify, runAudit, isServiceCall, isRR, isShopSupply, isLabourOnlyRepair, siblingCarriesParts, normService,
+  classify, runAudit, isServiceCall, isRR, isShopSupply, isPhotoExempt, isLabourOnlyRepair, siblingCarriesParts, normService,
   isZeroHourService, ZERO_HOUR_SERVICES, SHOP_SUPPLY_NOTES,
   inspectionCoveredBySoPhotos, INSPECTION_SO_PHOTO_MIN, INSP_KW, REP_KW,
 };
@@ -369,8 +386,9 @@ function runOpenAudit(so, opts = {}) {
     }
 
     // O6 / O7 — photos. Same expectation as a finished order: something for any
-    // item, before AND after for a repair. Shop supplies are exempt here too.
-    if (isShopSupply(ai.originalNote)) { /* nothing to photograph */ }
+    // item, before AND after for a repair. Shop supplies and service-call
+    // markers are exempt here too.
+    if (isPhotoExempt(ai.originalNote)) { /* nothing to photograph */ }
     else if (ai.photoCount === 0) {
       findings.push({
         check: 'O6', severity: 'warning', technician: tech,
