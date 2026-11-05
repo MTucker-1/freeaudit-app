@@ -18,6 +18,7 @@ const ExcelJS = require('exceljs');
 const gsheets = require('./gsheets');
 const mapocr = require('./mapocr');
 const partsLib = require('./parts');
+const inspections = require('./inspections');
 const techfilter = require('./techfilter');
 const vorto = require('./vorto');
 const { runAudit, runOpenAudit, isServiceCall, classify } = require('./checks');
@@ -80,6 +81,10 @@ function extractServiceOrderInPage() {
   const customerName = textOf(document.querySelector('a[href*="viewCustomer.html?customerId="]'));
   const unitLink = document.querySelector('a.unit-link, a[href*="viewCustomerUnit.html"]');
   const unitNumber = textOf(unitLink).replace(/^Unit\s+/i, '');
+  // The unit's own id, straight off that link — it is what the service-history
+  // page is keyed on, so the last-inspection lookup needs no search.
+  const customerUnitId = ((unitLink && unitLink.getAttribute('href')) || '')
+    .match(/customerUnitId=(\d+)/)?.[1] || '';
 
   // Whole-SO attachment count (Check C depends on this).
   const attBadge = textOf(document.querySelector('#roImageButtonBadge'));
@@ -150,7 +155,7 @@ function extractServiceOrderInPage() {
     });
   });
 
-  return { soNumber, customerName, unitNumber, soAttachmentCount, actionItems };
+  return { soNumber, customerName, unitNumber, customerUnitId, soAttachmentCount, actionItems };
 }
 
 /* ----------------------------------------------------------------------------
@@ -639,6 +644,11 @@ async function runFull(page, context) {
   /* A second tab for the parts pages, so the order page this loop is reading is
    * never navigated away from underneath it. */
   const partsPage = CONFIG.checkPartQuantities !== false ? await context.newPage().catch(() => null) : null;
+  /* A third tab for unit service history, for the same reason as the parts tab.
+   * Looked up once per UNIT, not once per order: several orders in a run share a
+   * unit, and the answer cannot change mid-run. */
+  const historyPage = CONFIG.showLastInspection !== false ? await context.newPage().catch(() => null) : null;
+  const lastInspCache = new Map();
   let partsChecked = 0;   // orders whose parts page was read and lined up
   let partsRuled = 0;     // services on those orders that HAVE a quantity rule
   let partsUnread = 0;    // orders whose parts page gave nothing usable
@@ -720,11 +730,39 @@ async function runFull(page, context) {
           }
         }
 
+        /* When was this unit last inspected, not counting this order?
+         *
+         * Only for orders that actually bill an inspection — that is where
+         * billing a second one by mistake is possible, and it keeps the run from
+         * loading a history page for every repair order.
+         *
+         * A failure here is reported as unknown and never as "no inspections":
+         * a blank that reads as "never inspected" is exactly how the Albany
+         * report went out wrong. */
+        let lastInsp = null;
+        if (historyPage && hasInspection && CONFIG.showLastInspection !== false) {
+          const key = so.customerUnitId || ('unit:' + unitNum);
+          if (lastInspCache.has(key)) {
+            lastInsp = lastInspCache.get(key);
+          } else {
+            try {
+              lastInsp = await inspections.lastInspection(historyPage, CONFIG.baseUrl, so.customerUnitId, {
+                excludeSo: so.soNumber || r.soNumber,
+                excludeRepairOrderId: r.repairOrderId,
+              });
+            } catch (e) {
+              lastInsp = { known: false, why: e.message };
+            }
+            lastInspCache.set(key, lastInsp);
+          }
+        }
+
         results.push({
           soNumber: so.soNumber, url: page.url(), repairOrderId: r.repairOrderId,
           customerName: so.customerName || r.customer, unitNumber: unitNum,
+          customerUnitId: so.customerUnitId || '',
           serviceWriter: r.serviceWriter || '', technicians, poNumber: r.poNumber,
-          sheetComplete, sheetStatus, notes, serviceCall,
+          sheetComplete, sheetStatus, notes, serviceCall, lastInspection: lastInsp,
           actionItemCount: so.actionItems.length, findings,
           // What each action item was FOR, keyed by its number. The photo viewer
           // shows this beside the image — "AI 3" alone doesn't say whether you
@@ -914,6 +952,7 @@ async function runFull(page, context) {
   log(`Photo fingerprints: ${allPhotos.length} photos, ${Object.keys(dupInfo).length} reused across orders.`);
   if (ocr) await ocr.close(); // tesseract holds worker processes open
   if (partsPage) await partsPage.close().catch(() => {});
+  if (historyPage) await historyPage.close().catch(() => {});
   /* Say what the parts check actually did. "Nothing was wrong" and "it never ran"
    * look identical in a report, and the difference matters when this is the thing
    * holding invoices back. */
@@ -1821,13 +1860,20 @@ function csvCell(s) {
 }
 
 function writeCsv(results) {
-  const lines = ['SO,Technician,ServiceWriter,Unit,CompleteInSheet,SheetStatus,Check,Severity,Title,Detail,URL'];
+  const lines = ['SO,Technician,ServiceWriter,Unit,CompleteInSheet,SheetStatus,LastInspection,DaysSinceInspection,Check,Severity,Title,Detail,URL'];
   results.forEach((r) => {
     const allTechs = (r.technicians || []).join('; ');
     const inSheet = r.sheetComplete === undefined ? '' : (r.sheetComplete ? 'Yes' : 'No');
     const sStatus = r.sheetStatus || '';
+    /* Blank only when the lookup did not run (no inspection on the order).
+     * "unknown" is written out when it ran and could not answer, so the column
+     * never passes a failed read off as "never inspected". */
+    const li = r.lastInspection;
+    const liDate = !li ? '' : (!li.known ? 'unknown' : (li.last ? li.last.date : 'none on record'));
+    const liDays = (li && li.known && li.last) ? String(li.last.daysAgo) : '';
     const base = (extra) => [csvCell(r.soNumber), csvCell(extra.tech), csvCell(r.serviceWriter),
-      csvCell(r.unitNumber), csvCell(inSheet), csvCell(sStatus), extra.check, extra.sev,
+      csvCell(r.unitNumber), csvCell(inSheet), csvCell(sStatus), csvCell(liDate), csvCell(liDays),
+      extra.check, extra.sev,
       csvCell(extra.title), csvCell(extra.detail), csvCell(r.url)].join(',');
     if (!r.findings.length) {
       lines.push(base({ tech: allTechs, check: '', sev: '', title: r.error ? 'ERROR' : 'OK', detail: r.error || 'No issues found' }));
@@ -1890,6 +1936,10 @@ function writeJson(results, dupInfo = {}, allPhotos = []) {
       poNumber: r.poNumber || null,
       actionItemCount: r.actionItemCount ?? null,
       serviceCall: !!r.serviceCall,
+      // Last inspection read off the unit's service history, excluding this
+      // order. null when the lookup did not run; known:false when it ran and
+      // could not answer. Never conflate either with "never inspected".
+      lastInspection: r.lastInspection || null,
       sheetComplete: r.sheetComplete ?? null,
       sheetStatus: r.sheetStatus || null,
       vorto: r.vorto || null,
@@ -2042,11 +2092,32 @@ function writeHtml(results, dupInfo = {}, openOrders = []) {
       }
     }
     const scBadge = r.serviceCall ? '<span class="sc-badge">🛎 Service Call</span>' : '';
+    /* Last inspection on this unit, so a second one is not billed on a unit that
+     * was done days ago. Shown only on orders that bill an inspection, which is
+     * the only place it can go wrong. "Unknown" is said out loud rather than
+     * left blank — a blank reads as "never inspected". */
+    let inspBadge = '';
+    if (r.lastInspection) {
+      const li = r.lastInspection;
+      if (!li.known) {
+        inspBadge = `<span class="sheet warn" title="${esc(li.why || '')}">Last inspection: unknown</span>`;
+      } else if (!li.last) {
+        inspBadge = '<span class="sheet">Last inspection: none on record</span>';
+      } else {
+        const d = li.last.daysAgo;
+        // Within 90 days a fresh inspection is usually not due, so it is worth
+        // the eye being drawn to it. The audit does not decide — it just shows.
+        const cls = d <= 90 ? 'sheet no' : 'sheet yes';
+        inspBadge = `<span class="${cls}" title="${esc(li.last.service || '')} on ${esc(li.last.so || '')}">`
+          + `Last inspection: ${esc(li.last.date)} (${d} day${d === 1 ? '' : 's'} ago`
+          + `${li.last.type ? ', ' + esc(li.last.type) : ''})</span>`;
+      }
+    }
     return `<div class="so ${sev}" id="${anchorFor(r)}">
       <div class="so-head"><strong>${esc(r.soNumber)}</strong>${scBadge}
         <span class="meta">${esc(r.customerName || '')} ${r.unitNumber ? '· Unit ' + esc(r.unitNumber) : ''}
           ${techList ? '· Tech: ' + esc(techList) : ''}${mtLabel(r)}</span>
-        ${sheetBadge}${vortoBadge}
+        ${sheetBadge}${vortoBadge}${inspBadge}
         <a href="${esc(r.url)}" target="_blank">open</a></div>
       ${findingHtml}${notesHtml(r)}${galleryHtml(r)}</div>`;
   }).join('');

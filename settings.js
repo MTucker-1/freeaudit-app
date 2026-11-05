@@ -31,6 +31,11 @@ const DEFAULTS = {
   // Check J: do the parts billed match the quantity the service names? Reads one
   // extra page per order (about 3 seconds), so it can be turned off for a quick run.
   checkPartQuantities: true,
+  // Show, on every order that bills an inspection, when that unit was LAST
+  // inspected (from its Fullbay service history, excluding this order), so a
+  // second inspection is not billed on a unit done days earlier. Reads one extra
+  // page per UNIT — cached, so several orders on the same unit cost one read.
+  showLastInspection: true,
   // Check A: an inspection action item with no photos of its own is not flagged
   // when the SERVICE ORDER itself carries at least this many attachments — the
   // trailer photos are routinely attached at the top of the order rather than
